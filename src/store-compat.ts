@@ -116,10 +116,6 @@ HomeworkStore.prototype.withPersistentMessageLock = async function <T>(
   });
 };
 
-// Commands use the current Topic only as the configuration scope. Homework itself
-// lives in the reserved system Topic, so /add in Topic A never creates homework
-// belonging to Topic A.
-
 HomeworkStore.prototype.archiveExpired = async function (now = new Date()): Promise<Array<Topic>> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const dueItems = await prisma.homeworkItem.findMany({
@@ -133,14 +129,11 @@ HomeworkStore.prototype.archiveExpired = async function (now = new Date()): Prom
     data: { archived: true },
   });
 
-  // The output destination is global, so one refresh is sufficient for all
-  // expired items instead of refreshing their former command Topics.
   const configured = await prisma.persistentMessage.findMany({
     where: { topic: { group: { chatId: 0n }, messageThreadId: 0 }, destinationChatId: { not: null } },
-    select: { topic: { select: { messageThreadId: true, group: { select: { chatId: true } } } } },
+    select: { id: true },
   });
-  if (configured.length === 0) return [];
-  return [SYSTEM_TOPIC];
+  return configured.length > 0 ? [SYSTEM_TOPIC] : [];
 };
 
 async function ensureSystemTopic(client: PrismaClient | Prisma.TransactionClient): Promise<{ id: number }> {
@@ -156,42 +149,39 @@ async function ensureSystemTopic(client: PrismaClient | Prisma.TransactionClient
   });
 }
 
-async function ensureSystemPersistentMessage(client: PrismaClient): Promise<{
+async function ensureSystemPersistentMessage(client: PrismaClient, messageType: PersistentMessageType): Promise<{
   messageId: number;
   destinationChatId: bigint | null;
   destinationThreadId: number | null;
 } | null> {
   const topic = await ensureSystemTopic(client);
   const existing = await client.persistentMessage.findUnique({
-    where: { topicId_messageType: { topicId: topic.id, messageType: "ACTIVE" } },
-  });
-  // Do not create empty ACTIVE/ARCHIVE records merely by reading settings.
-  // The caller that configures a destination creates the actual record.
-  if (!existing) {
-    const configured = await client.persistentMessage.findFirst({
-      where: { messageType: { in: ["ACTIVE", "ARCHIVE"] }, destinationChatId: { not: null } },
-      orderBy: { updatedAt: "desc" },
-    });
-    if (!configured) return null;
-    const migrated = await client.persistentMessage.upsert({
-      where: { topicId_messageType: { topicId: topic.id, messageType: configured.messageType } },
-      update: {
-        messageId: configured.messageId,
-        destinationChatId: configured.destinationChatId,
-        destinationThreadId: configured.destinationThreadId,
-      },
-      create: {
-        topicId: topic.id,
-        messageType: configured.messageType,
-        messageId: configured.messageId,
-        destinationChatId: configured.destinationChatId,
-        destinationThreadId: configured.destinationThreadId,
-      },
-    });
-    return migrated;
-  }
-  const messageType = existing.messageType;
-  return client.persistentMessage.findUnique({
     where: { topicId_messageType: { topicId: topic.id, messageType } },
+  });
+  if (existing) return existing;
+
+  // Migrate a pre-existing per-topic configuration to the global system
+  // record the first time it is accessed. This keeps existing deployments
+  // working without recreating or duplicating output messages.
+  const configured = await client.persistentMessage.findFirst({
+    where: { messageType, destinationChatId: { not: null } },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (!configured) return null;
+
+  return client.persistentMessage.upsert({
+    where: { topicId_messageType: { topicId: topic.id, messageType } },
+    update: {
+      messageId: configured.messageId,
+      destinationChatId: configured.destinationChatId,
+      destinationThreadId: configured.destinationThreadId,
+    },
+    create: {
+      topicId: topic.id,
+      messageType,
+      messageId: configured.messageId,
+      destinationChatId: configured.destinationChatId,
+      destinationThreadId: configured.destinationThreadId,
+    },
   });
 }
