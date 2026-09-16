@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { HomeworkStore } from "./store.js";
-import { formatPersistentMessages, IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject } from "./format.js";
+import { formatPersistentMessages, IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject, subgroupLabel } from "./format.js";
 import { parseAddCommand } from "./add-flow.js";
 import type { HomeworkSubgroup, HomeworkType, PersistentMessageType } from "./types.js";
 
@@ -39,17 +39,20 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.command("add", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const input = ctx.match.trim();
+
     if (input) {
       const parsed = parseAddCommand(input);
-      if (!parsed) throw new Error("Использование: /add <текст> | ДД.ММ.ГГГГ ЧЧ:ММ");
+      if (!parsed) {
+        throw new Error("Использование: /add <текст> | ДД.ММ.ГГГГ ЧЧ:ММ");
+      }
       await store.addHomework(command.topic, parsed.type, parsed.subject, parsed.description, parsed.subgroup, parsed.deadline, userInput(ctx));
       await refreshOutputMessages(ctx, store, command.topic);
       await replyInTopic(ctx, "✅ ДЗ добавлено.", command.topic);
       return;
     }
-    const state: AddState = { id: randomUUID(), origin: command.topic, userId: command.userId };
-    replaceAddState(state);
-    await replyInTopic(ctx, "Выберите тип ДЗ:", command.topic, addTypeKeyboard(state.id));
+
+    addStates.set(stateKey(command.topic, command.userId), { topic: command.topic, userId: command.userId });
+    await replyInTopic(ctx, "Выберите тип ДЗ:", command.topic, new InlineKeyboard().text("📚 ИРНИТУ", "add:type:IRNITU").text("📘 МФТИ", "add:type:MIPT"));
   }));
 
   bot.callbackQuery(/^add:type:(IRNITU|MIPT):([0-9a-f-]+)$/, async (ctx) => runCommand(ctx, async () => {
@@ -84,6 +87,20 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     state.subgroup = subgroup;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Введите срок: ДД.ММ.ГГГГ ЧЧ:ММ\nИли напишите: без срока");
+  }));
+
+  bot.command("group", async (ctx) => runCommand(ctx, async () => {
+    const command = getCommandContext(ctx);
+    await replyInTopic(ctx, "Выберите свою подгруппу:", command.topic, subgroupKeyboard("group:"));
+  }));
+
+  bot.callbackQuery(/^group:(ALL|GROUP_1|GROUP_2)$/, async (ctx) => runCommand(ctx, async () => {
+    const command = getCallbackContext(ctx);
+    const subgroup = getCallbackData(ctx).split(":")[1];
+    if (subgroup !== "ALL" && subgroup !== "GROUP_1" && subgroup !== "GROUP_2") throw new Error("Недопустимая подгруппа.");
+    await store.setUserSubgroup(command.userId, subgroup, userInput(ctx));
+    await ctx.answerCallbackQuery("Подгруппа сохранена");
+    await ctx.editMessageText(`Подгруппа: ${subgroupLabel(subgroup)}`);
   }));
 
   bot.command("setactive", async (ctx) => runCommand(ctx, async () => {
@@ -122,21 +139,29 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       if (!state.type || !state.subject || !state.subgroup) return;
       if (!state.deadline) {
         const input = ctx.message.text.trim();
-        if (input.toLowerCase() === "без срока") state.deadline = new Date(0);
-        else {
+        if (input.toLowerCase() === "без срока") {
+          state.deadline = new Date(0);
+        } else {
           const deadline = parseDeadline(input);
-          if (!deadline) { await replyInTopic(ctx, "Неверный срок. Формат: ДД.ММ.ГГГГ ЧЧ:ММ\nИли напишите: без срока", topic); return; }
+          if (!deadline) {
+            await replyInTopic(ctx, "Неверный срок. Формат: ДД.ММ.ГГГГ ЧЧ:ММ\nИли напишите: без срока", topic);
+            return;
+          }
           state.deadline = deadline;
         }
         await replyInTopic(ctx, "Теперь отправьте текст задания.", topic);
         return;
       }
       const description = ctx.message.text.trim();
-      if (!description) { await replyInTopic(ctx, "Текст задания не может быть пустым.", topic); return; }
+      if (!description) {
+        await replyInTopic(ctx, "Текст задания не может быть пустым.", topic);
+        return;
+      }
+
       const deadline = state.deadline.getTime() === 0 ? null : state.deadline;
-      await store.addHomework(state.origin, state.type, state.subject, description, state.subgroup, deadline, userInput(ctx));
+      await store.addHomework(topic, type, subject, description, subgroup, deadline, userInput(ctx));
       deleteAddState(state);
-      await refreshOutputMessages(ctx, store, state.origin);
+      await refreshOutputMessages(ctx, store, topic);
       await replyInTopic(ctx, "✅ ДЗ добавлено.", topic);
     });
   });
@@ -170,25 +195,72 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   return bot;
 }
 
-function addTypeKeyboard(stateId: string): InlineKeyboard { return new InlineKeyboard().text("📚 ИРНИТУ", `add:type:IRNITU:${stateId}`).text("📘 МФТИ", `add:type:MIPT:${stateId}`); }
-function replaceAddState(state: AddState): void { const key = stateKey(state.origin, state.userId); const previous = addStateKeys.get(key); if (previous) addStates.delete(previous); addStates.set(state.id, state); addStateKeys.set(key, state.id); }
-function getTopic(ctx: Context): Topic { return { chatId: Number(ctx.chat?.id ?? 0), threadId: Number(ctx.msg?.message_thread_id ?? 0) }; }
-function getTopicFromMessage(ctx: Context): Topic | null { return ctx.chat ? { chatId: Number(ctx.chat.id), threadId: Number(ctx.message?.message_thread_id ?? 0) } : null; }
-function getCommandContext(ctx: Context): CommandContext { return { topic: getTopic(ctx), userId: getUserId(ctx) }; }
-function getCallbackContext(ctx: Context): CommandContext { const message = ctx.callbackQuery?.message; if (!message) throw new Error("Команда доступна только в сообщении."); return { topic: { chatId: Number(message.chat.id), threadId: Number(message.message_thread_id ?? 0) }, userId: getUserId(ctx) }; }
-function getAddState(ctx: Context): AddState { const parts = getCallbackData(ctx).split(":"); const state = addStates.get(parts[parts.length - 1]); if (state && state.userId === getUserId(ctx)) return state; const command = getCallbackContext(ctx); const candidates = [...addStates.values()].filter((candidate) => candidate.userId === command.userId); if (candidates.length !== 1) throw new Error("Сессия добавления ДЗ не найдена. Повторите /add."); return candidates[0]; }
-function findAddState(topic: Topic, userId: number): AddState | undefined { const id = addStateKeys.get(stateKey(topic, userId)); return id ? addStates.get(id) : undefined; }
-function deleteAddState(state: AddState): void { addStates.delete(state.id); const key = stateKey(state.origin, state.userId); if (addStateKeys.get(key) === state.id) addStateKeys.delete(key); }
-function stateKey(topic: Topic, userId: number): string { return `${topic.chatId}:${topic.threadId}:${userId}`; }
-function getUserId(ctx: Context): number { const id = ctx.from?.id; if (!id) throw new Error("Не удалось определить пользователя."); return Number(id); }
-function userInput(ctx: Context): { telegramId: number; username?: string; firstName?: string; lastName?: string } { const user = ctx.from; if (!user) throw new Error("Не удалось определить пользователя."); return { telegramId: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name }; }
+function getTopic(ctx: Context): Topic {
+  return { chatId: Number(ctx.chat?.id ?? 0), threadId: Number(ctx.msg?.message_thread_id ?? 0) };
+}
 
-export function parseId(value: string): number | null { const id = Number(value.trim()); return Number.isInteger(id) && id > 0 ? id : null; }
-export function parseEditCommand(value: string): { id: number; text: string } | null { const match = value.trim().match(/^(\d+)\s+(.+)$/s); return match ? { id: Number(match[1]), text: match[2].trim() } : null; }
+function getTopicFromMessage(ctx: Context): Topic | null {
+  if (!ctx.chat) return null;
+  return { chatId: Number(ctx.chat.id), threadId: Number(ctx.message?.message_thread_id ?? 0) };
+}
 
-// Deadline input is deliberately interpreted as UTC wall-clock time. The same UTC
-// components are stored in PostgreSQL, compared with Date.now(), and rendered back
-// with UTC getters, so Render's server timezone cannot shift the deadline.
+function getCommandContext(ctx: Context): CommandContext {
+  return { topic: getTopic(ctx), userId: getUserId(ctx) };
+}
+
+function getCallbackContext(ctx: Context): CommandContext {
+  const message = ctx.callbackQuery?.message;
+  if (!message) throw new Error("Команда доступна только в сообщении.");
+  return { topic: { chatId: Number(message.chat.id), threadId: Number(message.message_thread_id ?? 0) }, userId: getUserId(ctx) };
+}
+
+function getAddState(ctx: Context): AddState {
+  const command = getCallbackContext(ctx);
+  const state = findAddState(command.topic, command.userId);
+  if (!state) throw new Error("Сессия добавления ДЗ не найдена. Повторите /add.");
+  return state;
+}
+
+function findAddState(topic: Topic, userId: number): AddState | undefined {
+  const exact = addStates.get(stateKey(topic, userId));
+  if (exact) return exact;
+
+  const candidates = [...addStates.values()].filter((state) => state.topic.chatId === topic.chatId && state.userId === userId);
+  if (candidates.length !== 1) return undefined;
+  return candidates[0];
+}
+
+function deleteAddState(state: AddState): void {
+  addStates.delete(stateKey(state.topic, state.userId));
+}
+
+function stateKey(topic: Topic, userId: number): string {
+  return `${topic.chatId}:${topic.threadId}:${userId}`;
+}
+
+function getUserId(ctx: Context): number {
+  const id = ctx.from?.id;
+  if (!id) throw new Error("Не удалось определить пользователя.");
+  return Number(id);
+}
+
+function userInput(ctx: Context): { telegramId: number; username?: string; firstName?: string; lastName?: string } {
+  const user = ctx.from;
+  if (!user) throw new Error("Не удалось определить пользователя.");
+  return { telegramId: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name };
+}
+
+export function parseId(value: string): number | null {
+  const id = Number(value.trim());
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+export function parseEditCommand(value: string): { id: number; text: string } | null {
+  const match = value.trim().match(/^(\d+)\s+(.+)$/s);
+  if (!match) return null;
+  return { id: Number(match[1]), text: match[2].trim() };
+}
+
 export function parseDeadline(value: string): Date | null {
   const match = value.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
   if (!match) return null;

@@ -16,7 +16,7 @@ export function parseAddCommand(value: string): ParsedAddCommand | null {
 
   const parts = input.split("|").map((part) => part.trim()).filter(Boolean);
   const description = parts[0];
-  if (!description || parts.length > 2) return null;
+  if (!description) return null;
 
   let deadline: Date | null = null;
   if (parts[1]) {
@@ -28,5 +28,11 @@ export function parseAddCommand(value: string): ParsedAddCommand | null {
     deadline = date;
   }
 
-  return { type: "IRNITU", subject: DEFAULT_SUBJECT, subgroup: "ALL", description, deadline };
+  return {
+    type: "IRNITU",
+    subject: DEFAULT_SUBJECT,
+    subgroup: "ALL",
+    description,
+    deadline,
+  };
 }
