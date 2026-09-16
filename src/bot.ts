@@ -17,7 +17,7 @@ const COMMAND_HELP = [
   "/group — выбрать подгруппу",
   "/setactive <chat_id|here> — куда отправлять актуальные ДЗ",
   "/setarchive <chat_id|here> — куда отправлять архив ДЗ",
-  "/settings — показать текущие чаты вывода",
+  "/settings — показать настройки вывода для текущего Topic",
 ].join("\n");
 
 const refreshLocks = new Map<string, Promise<void>>();
@@ -90,24 +90,27 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.command("setactive", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
-    await configureOutputDestination(ctx, store, "ACTIVE", destinationChatId);
+    await configureOutputDestination(store, command.topic, "ACTIVE", destinationChatId);
     await refreshOutputMessage(ctx, store, command.topic, "ACTIVE");
-    await replyInTopic(ctx, `Актуальные ДЗ теперь находятся в чате ${destinationChatId}.`, command.topic);
+    await replyInTopic(ctx, `Актуальные ДЗ теперь находятся в ${formatDestination(command.topic, destinationChatId)}.`, command.topic);
   }));
 
   bot.command("setarchive", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
-    await configureOutputDestination(ctx, store, "ARCHIVE", destinationChatId);
+    await configureOutputDestination(store, command.topic, "ARCHIVE", destinationChatId);
     await refreshOutputMessage(ctx, store, command.topic, "ARCHIVE");
-    await replyInTopic(ctx, `Архив ДЗ теперь находится в чате ${destinationChatId}.`, command.topic);
+    await replyInTopic(ctx, `Архив ДЗ теперь находится в ${formatDestination(command.topic, destinationChatId)}.`, command.topic);
   }));
 
   bot.command("settings", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
-    const active = await store.getOutputMessageInfo("ACTIVE");
-    const archive = await store.getOutputMessageInfo("ARCHIVE");
-    await replyInTopic(ctx, `Настройки вывода:\n\nАктуальные ДЗ: ${active?.destinationChatId ?? command.topic.chatId}\nАрхив ДЗ: ${archive?.destinationChatId ?? command.topic.chatId}\n\nИзменить:\n/setactive <chat_id|here>\n/setarchive <chat_id|here>`, command.topic);
+    const [active, archive] = await Promise.all([
+      store.getPersistentMessageInfo(command.topic.chatId, command.topic.threadId, "ACTIVE"),
+      store.getPersistentMessageInfo(command.topic.chatId, command.topic.threadId, "ARCHIVE"),
+    ]);
+    const formatSetting = (value: { destinationChatId: number | null } | null) => value?.destinationChatId === null || !value ? "не настроено" : String(value.destinationChatId);
+    await replyInTopic(ctx, `Настройки вывода текущего Topic:\n\nАктуальные ДЗ: ${formatSetting(active)}\nАрхив ДЗ: ${formatSetting(archive)}\n\nИзменить:\n/setactive <chat_id|here>\n/setarchive <chat_id|here>`, command.topic);
   }));
 
   bot.on("message:text", async (ctx, next) => {
@@ -256,7 +259,10 @@ async function runCommand(ctx: Context, action: () => Promise<void>): Promise<vo
 
 async function replyInTopic(ctx: Context, text: string, topic?: Topic, reply_markup?: InlineKeyboard): Promise<void> {
   const target = topic ?? getTopic(ctx);
-  await ctx.api.sendMessage(target.chatId, text, { message_thread_id: target.threadId, ...(reply_markup ? { reply_markup } : {}) });
+  const options: { message_thread_id?: number; reply_markup?: InlineKeyboard } = {};
+  if (target.threadId > 0) options.message_thread_id = target.threadId;
+  if (reply_markup) options.reply_markup = reply_markup;
+  await ctx.api.sendMessage(target.chatId, text, options);
 }
 
 function getCallbackData(ctx: Context): string {
@@ -275,12 +281,12 @@ function parseDestinationChatId(value: string, currentChatId: number): number {
   return id;
 }
 
-async function configureOutputDestination(ctx: Context, store: HomeworkStore, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
-  const previous = await store.getOutputMessageInfo(messageType);
+async function configureOutputDestination(store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
+  const previous = await store.getPersistentMessageInfo(topic.chatId, topic.threadId, messageType);
   if (previous?.messageId && previous.destinationChatId !== null) {
-    try { await ctx.api.deleteMessage(previous.destinationChatId, previous.messageId); } catch { /* message may already be deleted */ }
+    try { await store.deleteOutputTelegramMessage(previous.destinationChatId, previous.messageId); } catch { /* message may already be deleted */ }
   }
-  await store.setOutputDestination(messageType, destinationChatId);
+  await store.setPersistentMessageDestination(topic.chatId, topic.threadId, messageType, destinationChatId);
 }
 
 async function refreshOutputMessages(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
@@ -289,30 +295,52 @@ async function refreshOutputMessages(ctx: Context, store: HomeworkStore, topic: 
 }
 
 async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType): Promise<void> {
-  const lockKey = messageType;
+  const lockKey = `${topic.chatId}:${topic.threadId}:${messageType}`;
   const previous = refreshLocks.get(lockKey) ?? Promise.resolve();
   const next = previous.then(async () => {
-    const data = await store.getOutputMessages();
+    const data = await store.getTopicMessages(topic.chatId, topic.threadId);
     const text = formatPersistentMessages(data)[messageType === "ACTIVE" ? "active" : "archive"];
-    await store.withOutputMessageLock(messageType, async (messageId, savedDestinationChatId, setMessage) => {
-      // Не создаём сообщение, если для этого типа ещё не настроено место вывода.
-      // Иначе при /add архив (или актуальные ДЗ) отправлялся бы в текущий Topic.
-      if (savedDestinationChatId === null) return;
+    const saved = await store.getPersistentMessageInfo(topic.chatId, topic.threadId, messageType);
+    if (!saved || saved.destinationChatId === null) return;
+
+    await store.withPersistentMessageLock(topic.chatId, topic.threadId, messageType, async (messageId, setMessageId) => {
+      const destinationChatId = saved.destinationChatId as number;
 
       if (messageId) {
         try {
-          await ctx.api.editMessageText(savedDestinationChatId, messageId, text, { parse_mode: "HTML" });
+          await editOutputMessage(ctx, destinationChatId, topic, messageId, text);
           return;
         } catch (error) {
           console.warn(`Could not edit ${messageType} output message:`, error);
         }
       }
 
-      const message = await ctx.api.sendMessage(savedDestinationChatId, text, { parse_mode: "HTML" });
-      await setMessage(message.message_id);
-      try { await ctx.api.pinChatMessage(savedDestinationChatId, message.message_id, { disable_notification: true }); } catch (error) { console.warn(`Could not pin ${messageType} output message:`, error); }
+      const message = await sendOutputMessage(ctx, destinationChatId, topic, text);
+      await setMessageId(message.message_id);
+      try {
+        await ctx.api.pinChatMessage(destinationChatId, message.message_id, { disable_notification: true });
+      } catch (error) {
+        console.warn(`Could not pin ${messageType} output message:`, error);
+      }
     });
   });
+
   refreshLocks.set(lockKey, next);
   try { await next; } finally { if (refreshLocks.get(lockKey) === next) refreshLocks.delete(lockKey); }
+}
+
+async function sendOutputMessage(ctx: Context, destinationChatId: number, sourceTopic: Topic, text: string) {
+  const options: { parse_mode: "HTML"; message_thread_id?: number } = { parse_mode: "HTML" };
+  if (destinationChatId === sourceTopic.chatId && sourceTopic.threadId > 0) options.message_thread_id = sourceTopic.threadId;
+  return ctx.api.sendMessage(destinationChatId, text, options);
+}
+
+async function editOutputMessage(ctx: Context, destinationChatId: number, sourceTopic: Topic, messageId: number, text: string): Promise<unknown> {
+  return ctx.api.editMessageText(destinationChatId, messageId, text, { parse_mode: "HTML" });
+}
+
+function formatDestination(topic: Topic, destinationChatId: number): string {
+  if (destinationChatId === topic.chatId && topic.threadId > 0) return "этом Topic";
+  if (destinationChatId === topic.chatId) return "этом чате";
+  return `чате ${destinationChatId}`;
 }
