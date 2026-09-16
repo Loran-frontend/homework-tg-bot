@@ -9,9 +9,20 @@ export interface TelegramUserInput {
   lastName?: string;
 }
 
+export interface HomeworkInput {
+  type: HomeworkType;
+  subject: string;
+  description: string;
+  subgroup: HomeworkSubgroup;
+  deadline: Date | null;
+}
+
 export interface HomeworkItem {
   id: number;
-  text: string;
+  type: HomeworkType;
+  subject: string;
+  description: string;
+  subgroup: HomeworkSubgroup;
   deadline: Date | null;
   archived: boolean;
   completed: boolean;
