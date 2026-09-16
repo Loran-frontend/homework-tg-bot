@@ -11,6 +11,7 @@ const COMMAND_HELP = [
   "/done <номер> — отметить ДЗ выполненным",
 ].join("\n");
 
+// One refresh pipeline per chat/topic prevents concurrent commands from creating duplicate main messages.
 const refreshLocks = new Map<string, Promise<void>>();
 
 export function createBot(token: string, store: HomeworkStore): Bot {
@@ -180,9 +181,10 @@ async function refreshMessageUnsafe(ctx: Context, store: HomeworkStore, topic: T
       await ctx.api.editMessageText(topic.chatId, data.messageId, text, { parse_mode: "HTML" });
       return;
     } catch (error) {
-      const description = error instanceof Error ? error.message : String(error);
+      const description = getTelegramErrorDescription(error);
       if (description.includes("message is not modified")) return;
-      if (!isMissingMessageError(description)) throw error;
+      if (!isMissingMessageError(error)) throw error;
+      // The stored primary message no longer exists. Clear the stale id before recreating it.
       await store.setMessageId(topic.chatId, topic.threadId, null);
     }
   }
@@ -194,8 +196,19 @@ async function refreshMessageUnsafe(ctx: Context, store: HomeworkStore, topic: T
   await store.setMessageId(topic.chatId, topic.threadId, message.message_id);
 }
 
-function isMissingMessageError(description: string): boolean {
-  return description.includes("message to edit not found") || description.includes("message can't be edited");
+function getTelegramErrorDescription(error: unknown): string {
+  if (typeof error === "object" && error !== null && "description" in error) {
+    const description = (error as { description?: unknown }).description;
+    if (typeof description === "string") return description;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function isMissingMessageError(error: unknown): boolean {
+  const description = getTelegramErrorDescription(error).toLowerCase();
+  return description.includes("message to edit not found") ||
+    description.includes("message can't be edited") ||
+    description.includes("message to delete not found");
 }
 
 export function parseId(value: string): number | null {
