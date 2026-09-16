@@ -359,9 +359,9 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
     const text = formatPersistentMessages(data)[messageType === "ACTIVE" ? "active" : "archive"];
     const saved = await store.getPersistentMessageInfo(topic.chatId, topic.threadId, messageType);
     if (!saved || saved.destinationChatId === null) return;
+    const destinationChatId = saved.destinationChatId;
 
     await store.withPersistentMessageLock(topic.chatId, topic.threadId, messageType, async (messageId, setMessageId) => {
-      const destinationChatId = saved.destinationChatId;
       if (messageId) {
         try {
           await ctx.api.editMessageText(destinationChatId, messageId, text, { parse_mode: "HTML" });
