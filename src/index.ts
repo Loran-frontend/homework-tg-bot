@@ -1,8 +1,10 @@
 import "dotenv/config";
+import "./store-compat.js";
 import { createServer } from "node:http";
 import { PrismaClient } from "@prisma/client";
 import { webhookCallback } from "grammy";
-import { createBot, refreshMessage } from "./bot.js";
+import { createBot } from "./bot.js";
+import { refreshMessage } from "./refresh-compat.js";
 import { HomeworkStore } from "./store.js";
 
 const token = process.env.BOT_TOKEN;
@@ -44,7 +46,7 @@ bot.catch((error) => { console.error("Telegram bot error:", error.error); });
 const archiveExpiredHomework = async () => {
   try {
     const topics = await store.archiveExpired();
-    if (topics.length > 0) await refreshMessage(bot.api, store, topics[0]);
+    if (topics.length > 0) await refreshMessage(bot, store, topics[0]);
   } catch (error) {
     console.error("Failed to archive expired homework:", error);
   }
