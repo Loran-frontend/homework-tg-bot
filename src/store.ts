@@ -7,6 +7,11 @@ type TopicRecord = {
   group: { chatId: bigint };
 };
 
+type PersistentMessageInfo = {
+  messageId: number;
+  destinationChatId: number | null;
+};
+
 export class HomeworkStore {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -54,7 +59,7 @@ export class HomeworkStore {
 
     const messages = await this.prisma.persistentMessage.findMany({
       where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId } },
-      select: { messageType: true, messageId: true },
+      select: { messageType: true, messageId: true, destinationChatId: true },
     });
 
     const activeMessage = messages.find((message) => message.messageType === "ACTIVE");
@@ -64,7 +69,9 @@ export class HomeworkStore {
       chatId,
       threadId,
       activeMessageId: activeMessage?.messageId,
+      activeChatId: activeMessage?.destinationChatId === null || activeMessage?.destinationChatId === undefined ? undefined : Number(activeMessage.destinationChatId),
       archiveMessageId: archiveMessage?.messageId,
+      archiveChatId: archiveMessage?.destinationChatId === null || archiveMessage?.destinationChatId === undefined ? undefined : Number(archiveMessage.destinationChatId),
       active: [active, miptActive],
       archive: [archive, miptArchive],
     };
@@ -114,12 +121,34 @@ export class HomeworkStore {
     return { item: this.toHomeworkItem(item, found.type), alreadyDone: false };
   }
 
+  async getPersistentMessageInfo(chatId: number, threadId: number, messageType: PersistentMessageType): Promise<PersistentMessageInfo | null> {
+    const message = await this.prisma.persistentMessage.findFirst({
+      where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId }, messageType },
+      select: { messageId: true, destinationChatId: true },
+    });
+    if (!message) return null;
+    return { messageId: message.messageId, destinationChatId: message.destinationChatId === null ? null : Number(message.destinationChatId) };
+  }
+
+  async setPersistentMessageDestination(chatId: number, threadId: number, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const topic = await this.ensureTopicRecord(tx, chatId, threadId);
+      const lockKey = `homework:${topic.id}:${messageType}`;
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      await tx.persistentMessage.upsert({
+        where: { topicId_messageType: { topicId: topic.id, messageType } },
+        update: { destinationChatId: BigInt(destinationChatId), messageId: 0 },
+        create: { topicId: topic.id, messageType, messageId: 0, destinationChatId: BigInt(destinationChatId) },
+      });
+    });
+  }
+
   async getPersistentMessageId(chatId: number, threadId: number, messageType: PersistentMessageType): Promise<number | null> {
     const message = await this.prisma.persistentMessage.findFirst({
       where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId }, messageType },
       select: { messageId: true },
     });
-    return message?.messageId ?? null;
+    return message?.messageId && message.messageId > 0 ? message.messageId : null;
   }
 
   async withPersistentMessageLock<T>(chatId: number, threadId: number, messageType: PersistentMessageType, callback: (messageId: number | null, setMessageId: (id: number) => Promise<void>) => Promise<T>): Promise<T> {
@@ -141,7 +170,7 @@ export class HomeworkStore {
         });
       };
 
-      return callback(record?.messageId ?? null, setMessageId);
+      return callback(record?.messageId && record.messageId > 0 ? record.messageId : null, setMessageId);
     });
   }
 
