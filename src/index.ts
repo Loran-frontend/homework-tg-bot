@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 import { webhookCallback } from "grammy";
 import { createBot } from "./bot.js";
 import { refreshMessage } from "./refresh-compat.js";
+import { installOutputTopicRouter } from "./output-topic-router.js";
 import { HomeworkStore } from "./store.js";
 
 const token = process.env.BOT_TOKEN;
@@ -23,6 +24,7 @@ const store = new HomeworkStore(prisma);
 await store.connect();
 
 const bot = createBot(token, store);
+installOutputTopicRouter(bot, store);
 
 // The previous version stored one pair of persistent messages per Topic.
 // Remove those old messages once so the new global output messages cannot duplicate them.
