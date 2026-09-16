@@ -36,7 +36,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.command("add", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     addStates.set(stateKey(command.topic, command.userId), { topic: command.topic, userId: command.userId });
-    await ctx.reply("Выберите тип ДЗ:", { reply_markup: new InlineKeyboard().text("📚 ИРНИТУ", "add:type:IRNITU").text("📘 МФТИ", "add:type:MIPT") });
+    await replyInTopic(ctx, "Выберите тип ДЗ:", command.topic, new InlineKeyboard().text("📚 ИРНИТУ", "add:type:IRNITU").text("📘 МФТИ", "add:type:MIPT"));
   }));
 
   bot.callbackQuery(/^add:type:(IRNITU|MIPT)$/, async (ctx) => runCommand(ctx, async () => {
@@ -74,8 +74,8 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   }));
 
   bot.command("group", async (ctx) => runCommand(ctx, async () => {
-    getCommandContext(ctx);
-    await ctx.reply("Выберите свою подгруппу:", { reply_markup: subgroupKeyboard("group:") });
+    const command = getCommandContext(ctx);
+    await replyInTopic(ctx, "Выберите свою подгруппу:", command.topic, subgroupKeyboard("group:"));
   }));
 
   bot.callbackQuery(/^group:(ALL|GROUP_1|GROUP_2)$/, async (ctx) => runCommand(ctx, async () => {
@@ -226,7 +226,7 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
         }
       }
 
-      const options = savedDestinationChatId === null && targetChatId === topic.chatId
+      const options = savedDestinationChatId === targetChatId
         ? { message_thread_id: topic.threadId, parse_mode: "HTML" as const }
         : { parse_mode: "HTML" as const };
       const message = await ctx.api.sendMessage(targetChatId, text, options);
@@ -238,9 +238,9 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
   try { await current; } finally { if (refreshLocks.get(key) === current) refreshLocks.delete(key); }
 }
 
-async function replyInTopic(ctx: Context, text: string, topic?: Topic): Promise<void> {
+async function replyInTopic(ctx: Context, text: string, topic?: Topic, reply_markup?: InlineKeyboard): Promise<void> {
   const target = topic ?? getTopic(ctx);
-  await ctx.api.sendMessage(target.chatId, text, { message_thread_id: target.threadId });
+  await ctx.api.sendMessage(target.chatId, text, { message_thread_id: target.threadId, ...(reply_markup ? { reply_markup } : {}) });
 }
 
 export async function refreshMessage(api: Context["api"], store: HomeworkStore, topic: Topic): Promise<void> {
@@ -282,50 +282,49 @@ function getTopic(ctx: Context): Topic {
 }
 
 function getTopicFromMessage(ctx: Context): Topic | null {
-  const message = ctx.msg;
-  if (!message?.chat || message.chat.type !== "supergroup" || !message.is_topic_message || message.message_thread_id === undefined) return null;
+  const message = ctx.message;
+  if (!message || message.chat.type !== "supergroup") return null;
+  if (!("message_thread_id" in message) || message.message_thread_id === undefined) return null;
   return { chatId: message.chat.id, threadId: message.message_thread_id };
 }
 
 function getUserId(ctx: Context): number {
-  if (!ctx.from) throw new Error("Не удалось определить пользователя Telegram.");
-  return ctx.from.id;
+  const user = ctx.from;
+  if (!user) throw new Error("Не удалось определить пользователя.");
+  return user.id;
 }
 
 function userInput(ctx: Context) {
-  return { telegramId: getUserId(ctx), username: ctx.from?.username, firstName: ctx.from?.first_name, lastName: ctx.from?.last_name };
+  const user = ctx.from;
+  if (!user) throw new Error("Не удалось определить пользователя.");
+  return { telegramId: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name };
 }
 
-async function runCommand(ctx: Context, handler: () => Promise<void>): Promise<void> {
-  try { await handler(); } catch (error) { console.error("Telegram command error:", error); await replyError(ctx, error); }
-}
-
-async function replyError(ctx: Context, error: unknown): Promise<void> {
-  const message = error instanceof Error ? error.message : String(error);
-  try {
-    const topic = getTopicFromMessage(ctx);
-    if (topic) await replyInTopic(ctx, message || "Не удалось выполнить команду.", topic);
-    else if (ctx.callbackQuery?.message) await ctx.api.sendMessage(ctx.callbackQuery.message.chat.id, message || "Не удалось выполнить команду.");
-  } catch (telegramError) { console.error("Failed to send command error to Telegram:", telegramError); }
-}
-
-export function parseId(value: string): number | null {
+function parseId(value: string): number | null {
   const id = Number(value.trim());
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-export function parseEditCommand(value: string): { id: number; text: string } | null {
+function parseEditCommand(value: string): { id: number; text: string } | null {
   const match = value.trim().match(/^(\d+)\s+(.+)$/s);
   if (!match) return null;
-  const id = parseId(match[1]);
-  const text = match[2].trim();
-  return id && text ? { id, text } : null;
+  return { id: Number(match[1]), text: match[2].trim() };
 }
 
-export function parseDeadline(value: string): Date | null {
+function parseDeadline(value: string): Date | null {
   const match = value.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
   if (!match) return null;
   const [, day, month, year, hours, minutes] = match;
   const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes)));
   return date.getUTCFullYear() === Number(year) && date.getUTCMonth() === Number(month) - 1 && date.getUTCDate() === Number(day) && date.getUTCHours() === Number(hours) && date.getUTCMinutes() === Number(minutes) ? date : null;
+}
+
+async function runCommand(ctx: Context, action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    console.error("Bot command error:", error);
+    const text = error instanceof Error ? error.message : "Произошла ошибка.";
+    try { await replyInTopic(ctx, `❌ ${text}`); } catch { await ctx.reply(`❌ ${text}`); }
+  }
 }
