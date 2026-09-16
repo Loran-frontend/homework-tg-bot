@@ -30,33 +30,28 @@ export function formatHomework(topic: TopicHomework): string {
 
 export function formatPersistentMessages(data: TopicMessages): { active: string; archive: string } {
   return {
-    active: formatCombined("📚 <b>ДЗ</b>", data.active, false),
+    active: formatCombined("📚 <b>Актуальные ДЗ</b>", data.active, false),
     archive: formatCombined("🗄 <b>Архив ДЗ</b>", data.archive, true),
   };
 }
 
 function formatCombined(title: string, lists: TopicHomework[], archive: boolean): string {
-  const lines = [title, ""];
-  let hasItems = false;
-  for (const list of lists) {
+  const sections = lists.map((list) => {
     const sectionTitle = list.type === "IRNITU" ? "📚 <b>ДЗ ИРНИТУ</b>" : "📘 <b>ДЗ МФТИ</b>";
-    const section = formatSection(sectionTitle, list.items, archive);
-    if (hasItems) lines.push("", "────────────────");
-    lines.push(section);
-    hasItems = true;
-  }
-  return capMessage(lines.join("\n"));
+    return formatSection(sectionTitle, list.items, archive);
+  });
+  return capMessage([title, "", ...sections.join("\n\n────────────────\n\n").split("\n").filter(() => true)].join("\n"));
 }
 
-  for (let index = 0; index < topic.items.length; index += 1) {
-    const item = topic.items[index];
-    const mark = item.completed ? "✅" : "⬜";
-    const deadline = item.deadline ? ` — до ${formatDeadline(item.deadline)}` : "";
-    const fullLine = `${item.id}. ${mark} ${escapeHtml(item.text)}${deadline}`;
+function formatSection(title: string, items: HomeworkItem[], archive: boolean): string {
+  const lines = [title, ""];
+  if (items.length === 0) {
+    lines.push("Нет заданий.");
+    return lines.join("\n");
+  }
 
   for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    const block = formatItem(item, index + 1, archive);
+    const block = formatItem(items[index], index + 1, archive);
     const candidate = [...lines, ...(lines.length > 2 ? ["", block] : [block])].join("\n");
     if (candidate.length <= TELEGRAM_MESSAGE_LIMIT) {
       if (lines.length > 2) lines.push("");
@@ -66,13 +61,14 @@ function formatCombined(title: string, lists: TopicHomework[], archive: boolean)
     lines.push(`⚠️ Ещё ${items.length - index} ${pluralizeItems(items.length - index)} скрыто из-за ограничения Telegram.`);
     break;
   }
+
   return lines.join("\n");
 }
 
 function formatItem(item: HomeworkItem, number: number, archive: boolean): string {
   const mark = item.completed ? "✅" : "⬜";
   const deadline = item.deadline ? `\n⏰ до ${formatDeadline(item.deadline)}` : "";
-  const archived = archive ? "\n✅ Архивировано" : "";
+  const archived = archive ? "\n🗄 В архиве" : "";
   return `${number}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${escapeHtml(item.description)}\n👥 ${subgroupLabel(item.subgroup)}${deadline}${archived}`;
 }
 
@@ -84,16 +80,12 @@ export function subgroupLabel(subgroup: HomeworkSubgroup): string {
 
 export function formatDeadline(deadline: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(deadline.getDate())}.${pad(deadline.getMonth() + 1)}.${deadline.getFullYear()} ${pad(deadline.getHours())}:${pad(deadline.getMinutes())}`;
+  return `${pad(deadline.getUTCDate())}.${pad(deadline.getUTCMonth() + 1)}.${deadline.getUTCFullYear()} ${pad(deadline.getUTCHours())}:${pad(deadline.getUTCMinutes())}`;
 }
 
-function formatDeadline(value: Date): string {
-  const pad = (number: number) => String(number).padStart(2, "0");
-  return `${pad(value.getUTCDate())}.${pad(value.getUTCMonth() + 1)}.${value.getUTCFullYear()} ${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())} UTC`;
-}
-
-function fits(lines: string[], nextLine: string): boolean {
-  return [...lines, nextLine].join("\n").length <= TELEGRAM_MESSAGE_LIMIT;
+function capMessage(value: string): string {
+  if (value.length <= TELEGRAM_MESSAGE_LIMIT) return value;
+  return `${value.slice(0, TELEGRAM_MESSAGE_LIMIT - 40)}\n… сообщение сокращено.`;
 }
 
 function pluralizeItems(count: number): string {
