@@ -42,7 +42,7 @@ test("empty persistent lists render an explicit empty state", () => {
     threadId: 0,
     active: [],
     archive: [],
-  });
+  }).active;
 
   assert.match(output, /Актуальные ДЗ/iu);
   assert.match(output, /Нет заданий\./u);
