@@ -295,8 +295,11 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
     const data = await store.getOutputMessages();
     const text = formatPersistentMessages(data)[messageType === "ACTIVE" ? "active" : "archive"];
     await store.withOutputMessageLock(messageType, async (messageId, savedDestinationChatId, setMessage) => {
-      const targetChatId = savedDestinationChatId ?? topic.chatId;
-      if (messageId && savedDestinationChatId !== null) {
+      // Не создаём сообщение, если для этого типа ещё не настроено место вывода.
+      // Иначе при /add архив (или актуальные ДЗ) отправлялся бы в текущий Topic.
+      if (savedDestinationChatId === null) return;
+
+      if (messageId) {
         try {
           await ctx.api.editMessageText(savedDestinationChatId, messageId, text, { parse_mode: "HTML" });
           return;
@@ -304,10 +307,10 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
           console.warn(`Could not edit ${messageType} output message:`, error);
         }
       }
-      const options = savedDestinationChatId === targetChatId ? { message_thread_id: topic.threadId, parse_mode: "HTML" as const } : { parse_mode: "HTML" as const };
-      const message = await ctx.api.sendMessage(targetChatId, text, options);
+
+      const message = await ctx.api.sendMessage(savedDestinationChatId, text, { parse_mode: "HTML" });
       await setMessage(message.message_id);
-      try { await ctx.api.pinChatMessage(targetChatId, message.message_id, { disable_notification: true }); } catch (error) { console.warn(`Could not pin ${messageType} output message:`, error); }
+      try { await ctx.api.pinChatMessage(savedDestinationChatId, message.message_id, { disable_notification: true }); } catch (error) { console.warn(`Could not pin ${messageType} output message:`, error); }
     });
   });
   refreshLocks.set(lockKey, next);
