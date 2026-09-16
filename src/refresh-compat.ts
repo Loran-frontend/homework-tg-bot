@@ -15,9 +15,10 @@ async function refreshOutputMessage(bot: Bot, store: HomeworkStore, topic: Topic
   const text = formatPersistentMessages(data)[messageType === "ACTIVE" ? "active" : "archive"];
 
   await store.withOutputMessageLock(messageType, async (messageId, savedDestinationChatId, setMessage) => {
-    const targetChatId = savedDestinationChatId ?? topic.chatId;
+    // Не создаём сообщение для типа, который ещё не настроен.
+    if (savedDestinationChatId === null) return;
 
-    if (messageId && savedDestinationChatId !== null) {
+    if (messageId) {
       try {
         await bot.api.editMessageText(savedDestinationChatId, messageId, text, { parse_mode: "HTML" });
         return;
@@ -26,15 +27,11 @@ async function refreshOutputMessage(bot: Bot, store: HomeworkStore, topic: Topic
       }
     }
 
-    const options = savedDestinationChatId === targetChatId
-      ? { message_thread_id: topic.threadId, parse_mode: "HTML" as const }
-      : { parse_mode: "HTML" as const };
-
-    const message = await bot.api.sendMessage(targetChatId, text, options);
+    const message = await bot.api.sendMessage(savedDestinationChatId, text, { parse_mode: "HTML" });
     await setMessage(message.message_id);
 
     try {
-      await bot.api.pinChatMessage(targetChatId, message.message_id, { disable_notification: true });
+      await bot.api.pinChatMessage(savedDestinationChatId, message.message_id, { disable_notification: true });
     } catch (error) {
       console.warn(`Could not pin ${messageType} output message:`, error);
     }
