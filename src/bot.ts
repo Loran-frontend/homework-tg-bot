@@ -15,6 +15,9 @@ const COMMAND_HELP = [
   "/list — обновить список ДЗ",
   "/done <номер> — отметить ДЗ выполненным",
   "/group — выбрать подгруппу",
+  "/setactive <chat_id|here> — куда отправлять актуальные ДЗ",
+  "/setarchive <chat_id|here> — куда отправлять архив ДЗ",
+  "/settings — показать текущие чаты вывода",
 ].join("\n");
 
 const refreshLocks = new Map<string, Promise<void>>();
@@ -88,6 +91,30 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     await store.setUserSubgroup(command.userId, subgroup, userInput(ctx));
     await ctx.answerCallbackQuery("Подгруппа сохранена");
     await ctx.editMessageText(`Подгруппа: ${subgroupLabel(subgroup)}`);
+  }));
+
+  bot.command("setactive", async (ctx) => runCommand(ctx, async () => {
+    const command = getCommandContext(ctx);
+    const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
+    await configureDestination(ctx, store, command.topic, "ACTIVE", destinationChatId);
+    await replyInTopic(ctx, `Актуальные ДЗ теперь отправляются в чат ${destinationChatId}.`, command.topic);
+    await refreshPersistentMessages(ctx, store, command.topic);
+  }));
+
+  bot.command("setarchive", async (ctx) => runCommand(ctx, async () => {
+    const command = getCommandContext(ctx);
+    const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
+    await configureDestination(ctx, store, command.topic, "ARCHIVE", destinationChatId);
+    await replyInTopic(ctx, `Архив ДЗ теперь отправляется в чат ${destinationChatId}.`, command.topic);
+    await refreshPersistentMessages(ctx, store, command.topic);
+  }));
+
+  bot.command("settings", async (ctx) => runCommand(ctx, async () => {
+    const command = getCommandContext(ctx);
+    const data = await store.getTopicMessages(command.topic.chatId, command.topic.threadId);
+    const activeChatId = data.activeChatId ?? command.topic.chatId;
+    const archiveChatId = data.archiveChatId ?? command.topic.chatId;
+    await replyInTopic(ctx, `Настройки вывода:\n\nАктуальные ДЗ: ${activeChatId}\nАрхив ДЗ: ${archiveChatId}\n\nИзменить:\n/setactive <chat_id|here>\n/setarchive <chat_id|here>`, command.topic);
   }));
 
   bot.on("message:text", async (ctx, next) => {
@@ -185,22 +212,46 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   return bot;
 }
 
+async function configureDestination(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
+  const previous = await store.getPersistentMessageInfo(topic.chatId, topic.threadId, messageType);
+  if (previous?.messageId && previous.messageId > 0) {
+    const oldChatId = previous.destinationChatId ?? topic.chatId;
+    try {
+      await ctx.api.deleteMessage(oldChatId, previous.messageId);
+    } catch (error) {
+      console.warn(`Could not delete old ${messageType} message:`, error);
+    }
+  }
+  await store.setPersistentMessageDestination(topic.chatId, topic.threadId, messageType, destinationChatId);
+}
+
+function parseDestinationChatId(value: string, fallbackChatId: number): number {
+  const normalized = value.trim();
+  if (!normalized || normalized === "here") return fallbackChatId;
+  const chatId = Number(normalized);
+  if (!Number.isSafeInteger(chatId) || chatId === 0) {
+    throw new Error("Неверный chat_id. Используйте /setactive <chat_id> или слово here.");
+  }
+  return chatId;
+}
+
 async function refreshPersistentMessages(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
   const data = await store.getTopicMessages(topic.chatId, topic.threadId);
   const text = formatPersistentMessages(data);
-  await refreshPersistentMessage(ctx, store, topic, "ACTIVE", text.active, data.activeMessageId);
-  await refreshPersistentMessage(ctx, store, topic, "ARCHIVE", text.archive, data.archiveMessageId);
+  await refreshPersistentMessage(ctx, store, topic, "ACTIVE", text.active, data.activeMessageId, data.activeChatId);
+  await refreshPersistentMessage(ctx, store, topic, "ARCHIVE", text.archive, data.archiveMessageId, data.archiveChatId);
 }
 
-async function refreshPersistentMessage(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, text: string, knownMessageId?: number): Promise<void> {
+async function refreshPersistentMessage(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, text: string, knownMessageId?: number, destinationChatId?: number): Promise<void> {
   const key = `${topic.chatId}:${topic.threadId}:${messageType}`;
   const previous = refreshLocks.get(key) ?? Promise.resolve();
   const current = previous.then(async () => {
     await store.withPersistentMessageLock(topic.chatId, topic.threadId, messageType, async (savedMessageId, setMessageId) => {
       const messageId = savedMessageId ?? knownMessageId;
+      const targetChatId = destinationChatId ?? topic.chatId;
       if (messageId) {
         try {
-          await ctx.api.editMessageText(topic.chatId, messageId, text, { parse_mode: "HTML" });
+          await ctx.api.editMessageText(targetChatId, messageId, text, { parse_mode: "HTML" });
           return;
         } catch (error) {
           const description = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -209,9 +260,12 @@ async function refreshPersistentMessage(ctx: Context, store: HomeworkStore, topi
         }
       }
 
-      const message = await ctx.api.sendMessage(topic.chatId, text, { message_thread_id: topic.threadId, parse_mode: "HTML" });
+      const options = targetChatId === topic.chatId
+        ? { message_thread_id: topic.threadId, parse_mode: "HTML" as const }
+        : { parse_mode: "HTML" as const };
+      const message = await ctx.api.sendMessage(targetChatId, text, options);
       await setMessageId(message.message_id);
-      await ctx.api.pinChatMessage(topic.chatId, message.message_id, { disable_notification: true });
+      await ctx.api.pinChatMessage(targetChatId, message.message_id, { disable_notification: true });
     });
   });
   refreshLocks.set(key, current);
@@ -289,8 +343,8 @@ async function replyInTopic(ctx: Context, text: string, topic?: Topic): Promise<
 export async function refreshMessage(api: Context["api"], store: HomeworkStore, topic: Topic): Promise<void> {
   const data = await store.getTopicMessages(topic.chatId, topic.threadId);
   const text = formatPersistentMessages(data);
-  await refreshPersistentMessage({ api } as Context, store, topic, "ACTIVE", text.active, data.activeMessageId);
-  await refreshPersistentMessage({ api } as Context, store, topic, "ARCHIVE", text.archive, data.archiveMessageId);
+  await refreshPersistentMessage({ api } as Context, store, topic, "ACTIVE", text.active, data.activeMessageId, data.activeChatId);
+  await refreshPersistentMessage({ api } as Context, store, topic, "ARCHIVE", text.archive, data.archiveMessageId, data.archiveChatId);
 }
 
 export function parseId(value: string): number | null {
