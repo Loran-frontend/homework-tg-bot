@@ -2,7 +2,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import type { HomeworkInput, HomeworkItem, HomeworkSubgroup, HomeworkType, PersistentMessageType, TelegramUserInput, TopicHomework, TopicMessages } from "./types.js";
 
 type TopicRecord = { id: number; messageThreadId: number; group: { chatId: bigint } };
-type PersistentMessageInfo = { messageId: number; destinationChatId: number | null };
+type PersistentMessageInfo = { messageId: number; destinationChatId: number | null; destinationThreadId: number | null };
 type LegacyPersistentMessage = { messageId: number; messageType: PersistentMessageType; destinationChatId: number | null; topicChatId: number; threadId: number };
 
 export class HomeworkStore {
@@ -21,7 +21,7 @@ export class HomeworkStore {
   async getTopicMessages(chatId: number, threadId: number): Promise<TopicMessages> {
     await this.archiveExpired();
     const [active, archive, miptActive, miptArchive] = await Promise.all([this.getTopic(chatId, threadId, "IRNITU", false), this.getTopic(chatId, threadId, "IRNITU", true), this.getTopic(chatId, threadId, "MIPT", false), this.getTopic(chatId, threadId, "MIPT", true)]);
-    const messages = await this.prisma.persistentMessage.findMany({ where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId } }, select: { messageType: true, messageId: true, destinationChatId: true } });
+    const messages = await this.prisma.persistentMessage.findMany({ where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId } }, select: { messageType: true, messageId: true, destinationChatId: true, destinationThreadId: true } });
     const activeMessage = messages.find((message) => message.messageType === "ACTIVE");
     const archiveMessage = messages.find((message) => message.messageType === "ARCHIVE");
     return { chatId, threadId, activeMessageId: activeMessage?.messageId, activeChatId: activeMessage?.destinationChatId == null ? undefined : Number(activeMessage.destinationChatId), archiveMessageId: archiveMessage?.messageId, archiveChatId: archiveMessage?.destinationChatId == null ? undefined : Number(archiveMessage.destinationChatId), active: [active, miptActive], archive: [archive, miptArchive] };
@@ -54,16 +54,18 @@ export class HomeworkStore {
     });
   }
 
-  async edit(chatId: number, threadId: number, id: number, description: string): Promise<HomeworkItem | null> {
-    const found = await this.findItem(chatId, threadId, id);
-    if (!found || found.item.archived) return null;
+  async edit(chatId: number, threadId: number, id: number, description: string, userId?: number): Promise<HomeworkItem | null> {
+    const found = await this.findItemById(id);
+    if (!found) return null;
+    await this.assertCanMutate(found.item.authorId, userId);
     const item = await this.prisma.homeworkItem.update({ where: { id }, data: { description } });
     return this.toHomeworkItem(item, found.type);
   }
 
-  async remove(chatId: number, threadId: number, id: number): Promise<{ removed: boolean; type?: HomeworkType }> {
-    const found = await this.findItem(chatId, threadId, id);
-    if (!found || found.item.archived) return { removed: false };
+  async remove(chatId: number, threadId: number, id: number, userId?: number): Promise<{ removed: boolean; type?: HomeworkType }> {
+    const found = await this.findItemById(id);
+    if (!found) return { removed: false };
+    await this.assertCanMutate(found.item.authorId, userId);
     const result = await this.prisma.homeworkItem.deleteMany({ where: { id } });
     return { removed: result.count === 1, type: found.type };
   }
@@ -77,15 +79,15 @@ export class HomeworkStore {
   }
 
   async getPersistentMessageInfo(chatId: number, threadId: number, messageType: PersistentMessageType): Promise<PersistentMessageInfo | null> {
-    const message = await this.prisma.persistentMessage.findFirst({ where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId }, messageType }, select: { messageId: true, destinationChatId: true } });
+    const message = await this.prisma.persistentMessage.findFirst({ where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId }, messageType }, select: { messageId: true, destinationChatId: true, destinationThreadId: true } });
     if (!message) return null;
-    return { messageId: message.messageId, destinationChatId: message.destinationChatId == null ? null : Number(message.destinationChatId) };
+    return { messageId: message.messageId, destinationChatId: message.destinationChatId == null ? null : Number(message.destinationChatId), destinationThreadId: message.destinationThreadId };
   }
 
-  async setPersistentMessageDestination(chatId: number, threadId: number, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
+  async setPersistentMessageDestination(chatId: number, threadId: number, messageType: PersistentMessageType, destinationChatId: number, destinationThreadId: number | null): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       const topic = await this.ensureTopicRecord(tx, chatId, threadId);
-      await tx.persistentMessage.upsert({ where: { topicId_messageType: { topicId: topic.id, messageType } }, update: { destinationChatId: BigInt(destinationChatId), messageId: 0 }, create: { topicId: topic.id, messageType, messageId: 0, destinationChatId: BigInt(destinationChatId) } });
+      await tx.persistentMessage.upsert({ where: { topicId_messageType: { topicId: topic.id, messageType } }, update: { destinationChatId: BigInt(destinationChatId), destinationThreadId, messageId: 0 }, create: { topicId: topic.id, messageType, messageId: 0, destinationChatId: BigInt(destinationChatId), destinationThreadId } });
     });
   }
 
@@ -96,7 +98,7 @@ export class HomeworkStore {
   async getOutputMessageInfo(messageType: PersistentMessageType): Promise<PersistentMessageInfo | null> {
     const message = await this.prisma.outputMessage.findUnique({ where: { messageType }, select: { messageId: true, destinationChatId: true } });
     if (!message) return null;
-    return { messageId: message.messageId, destinationChatId: message.destinationChatId == null ? null : Number(message.destinationChatId) };
+    return { messageId: message.messageId, destinationChatId: message.destinationChatId == null ? null : Number(message.destinationChatId), destinationThreadId: null };
   }
 
   async withOutputMessageLock<T>(messageType: PersistentMessageType, callback: (messageId: number | null, destinationChatId: number | null, setMessage: (id: number) => Promise<void>) => Promise<T>): Promise<T> {
@@ -123,13 +125,6 @@ export class HomeworkStore {
     return [...topics.values()];
   }
 
-  async setUserSubgroup(telegramId: number, subgroup: HomeworkSubgroup, input?: TelegramUserInput): Promise<void> {
-    await this.prisma.telegramUser.upsert({ where: { telegramId: BigInt(telegramId) }, update: { subgroup, username: input?.username, firstName: input?.firstName, lastName: input?.lastName }, create: { telegramId: BigInt(telegramId), subgroup, username: input?.username, firstName: input?.firstName, lastName: input?.lastName } });
-  }
-  async getUserSubgroup(telegramId: number): Promise<HomeworkSubgroup> {
-    const user = await this.prisma.telegramUser.findUnique({ where: { telegramId: BigInt(telegramId) }, select: { subgroup: true } });
-    return user?.subgroup ?? "ALL";
-  }
   async ensureTopic(chatId: number, threadId: number, type: HomeworkType = "IRNITU"): Promise<TopicHomework> {
     return this.prisma.$transaction(async (tx) => {
       const { list } = await this.ensureContext(tx, chatId, threadId, type);
@@ -161,6 +156,19 @@ export class HomeworkStore {
     if (!item) return null;
     return { item: this.toHomeworkItem(item, item.list.type), type: item.list.type };
   }
+
+  private async findItemById(id: number): Promise<{ item: HomeworkItem; type: HomeworkType } | null> {
+    const item = await this.prisma.homeworkItem.findUnique({ where: { id }, include: { list: { select: { type: true } } } });
+    if (!item) return null;
+    return { item: this.toHomeworkItem(item, item.list.type), type: item.list.type };
+  }
+
+  private async assertCanMutate(authorId: number, userId?: number): Promise<void> {
+    if (userId === undefined) return;
+    const user = await this.prisma.telegramUser.findUnique({ where: { telegramId: BigInt(userId) }, select: { id: true } });
+    if (!user || user.id !== authorId) throw new Error("Нет прав на изменение этого ДЗ.");
+  }
+
   private async ensureList(topicId: number, type: HomeworkType) {
     return this.prisma.$transaction(async (tx) => { await this.lockHomeworkList(tx, topicId, type); return tx.homeworkList.upsert({ where: { topicId_type: { topicId, type } }, update: {}, create: { topicId, type }, include: { items: { where: { archived: false }, orderBy: { id: "asc" } } } }); });
   }

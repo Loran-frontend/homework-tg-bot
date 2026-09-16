@@ -67,7 +67,7 @@ function formatSection(title: string, items: HomeworkItem[], archive: boolean): 
   }
 
   for (let index = 0; index < items.length; index += 1) {
-    const block = formatItem(items[index], index + 1, archive);
+    const block = formatItem(items[index], archive);
     const candidate = [...lines, ...(lines.length > 2 ? ["", block] : [block])].join("\n");
     if (candidate.length <= TELEGRAM_MESSAGE_LIMIT) {
       if (lines.length > 2) lines.push("");
@@ -81,11 +81,11 @@ function formatSection(title: string, items: HomeworkItem[], archive: boolean): 
   return lines.join("\n");
 }
 
-function formatItem(item: HomeworkItem, number: number, archive: boolean): string {
+function formatItem(item: HomeworkItem, archive: boolean): string {
   const mark = item.completed ? "✅" : "⬜";
   const deadline = item.deadline ? `\n⏰ до ${formatDeadline(item.deadline)}` : "";
   const archived = archive ? "\n🗄 В архиве" : "";
-  return `${number}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${escapeHtml(item.description)}\n👥 ${subgroupLabel(item.subgroup)}${deadline}${archived}`;
+  return `${item.id}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${escapeHtml(item.description)}\n👥 ${subgroupLabel(item.subgroup)}${deadline}${archived}`;
 }
 
 export function subgroupLabel(subgroup: HomeworkSubgroup): string {

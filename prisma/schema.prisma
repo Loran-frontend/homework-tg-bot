@@ -55,9 +55,8 @@ model TelegramUser {
   username    String?
   firstName   String?
   lastName    String?
-  subgroup    HomeworkSubgroup?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   authoredHomework HomeworkItem[] @relation("HomeworkAuthor")
 }
@@ -78,13 +77,14 @@ model HomeworkList {
 }
 
 model PersistentMessage {
-  id                Int                   @id @default(autoincrement())
-  topicId           Int
-  messageType       PersistentMessageType
-  messageId         Int
-  destinationChatId BigInt?
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
+  id                  Int                   @id @default(autoincrement())
+  topicId             Int
+  messageType         PersistentMessageType
+  messageId           Int
+  destinationChatId   BigInt?
+  destinationThreadId Int?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
 
   topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
@@ -93,9 +93,9 @@ model PersistentMessage {
 }
 
 model OutputMessage {
-  id                Int                   @id @default(autoincrement())
+  id                Int                  @id @default(autoincrement())
   messageType       PersistentMessageType @unique
-  messageId         Int                   @default(0)
+  messageId         Int                  @default(0)
   destinationChatId BigInt?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt

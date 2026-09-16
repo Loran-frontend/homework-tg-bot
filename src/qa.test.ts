@@ -12,6 +12,20 @@ const makeTopic = (items: TopicHomework["items"] = []): TopicHomework => ({
   items,
 });
 
+const makeItem = (subgroup: HomeworkItem["subgroup"], id: number): HomeworkItem => ({
+  id,
+  type: "IRNITU",
+  subject: "Вычислительная математика",
+  description: `Задание ${id}`,
+  subgroup,
+  deadline: null,
+  archived: false,
+  completed: false,
+  authorId: 10,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+});
+
 test("command argument edge cases", () => {
   assert.equal(parseId(""), null);
   assert.equal(parseId("-1"), null);
@@ -71,6 +85,27 @@ test("homework text is safely formatted as HTML", () => {
   assert.match(text, /&lt;script&gt;/);
   assert.match(text, /&amp; dangerous/);
   assert.ok(!text.includes("<script>"));
+});
+
+test("all homework subgroups are displayed without user-subgroup filtering", () => {
+  const data = {
+    chatId: -100123,
+    threadId: 1,
+    activeMessageId: undefined,
+    activeChatId: undefined,
+    archiveMessageId: undefined,
+    archiveChatId: undefined,
+    active: [{ ...makeTopic([makeItem("GROUP_1", 1), makeItem("GROUP_2", 2), makeItem("ALL", 3)]) }],
+    archive: [],
+  };
+
+  const text = formatPersistentMessages(data).active;
+  assert.match(text, /1 подгруппа/);
+  assert.match(text, /2 подгруппа/);
+  assert.match(text, /Все/);
+  assert.match(text, /Задание 1/);
+  assert.match(text, /Задание 2/);
+  assert.match(text, /Задание 3/);
 });
 
 test("empty topic produces a valid primary-message body", () => {
