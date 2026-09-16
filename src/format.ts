@@ -1,15 +1,52 @@
-import type { TopicHomework } from "./types.js";
+import type { HomeworkItem, HomeworkSubgroup, HomeworkType, TopicHomework, TopicMessages } from "./types.js";
 
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
 
+export const IRNITU_SUBJECTS = [
+  "Вычислительная математика",
+  "Иностранный язык",
+  "Исследование операций",
+  "Критическое и системное мышление",
+  "Организация ЭВМ и периферийные устройства",
+] as const;
+
+export const MIPT_SUBJECTS = [
+  "Основы IT-технологий(АКОС)",
+  "Программирование на языке Python",
+  "Теория вероятностей",
+] as const;
+
+export function subjectsForType(type: HomeworkType): readonly string[] {
+  return type === "IRNITU" ? IRNITU_SUBJECTS : MIPT_SUBJECTS;
+}
+
+export function isValidSubject(type: HomeworkType, subject: string): boolean {
+  return subjectsForType(type).includes(subject);
+}
+
 export function formatHomework(topic: TopicHomework): string {
-  const lines = ["📚 <b>Домашние задания</b>", ""];
+  return formatSection(topic.type === "IRNITU" ? "📚 <b>ДЗ ИРНИТУ</b>" : "📘 <b>ДЗ МФТИ</b>", topic.items, false);
+}
 
-  if (topic.items.length === 0) {
-    return lines.concat("Пока домашних заданий нет.").join("\n");
+export function formatPersistentMessages(data: TopicMessages): { active: string; archive: string } {
+  return {
+    active: formatCombined("📚 <b>ДЗ</b>", data.active, false),
+    archive: formatCombined("🗄 <b>Архив ДЗ</b>", data.archive, true),
+  };
+}
+
+function formatCombined(title: string, lists: TopicHomework[], archive: boolean): string {
+  const lines = [title, ""];
+  let hasItems = false;
+  for (const list of lists) {
+    const sectionTitle = list.type === "IRNITU" ? "📚 <b>ДЗ ИРНИТУ</b>" : "📘 <b>ДЗ МФТИ</b>";
+    const section = formatSection(sectionTitle, list.items, archive);
+    if (hasItems) lines.push("", "────────────────");
+    lines.push(section);
+    hasItems = true;
   }
-
-  let hiddenItems = 0;
+  return capMessage(lines.join("\n"));
+}
 
   for (let index = 0; index < topic.items.length; index += 1) {
     const item = topic.items[index];
@@ -17,23 +54,37 @@ export function formatHomework(topic: TopicHomework): string {
     const deadline = item.deadline ? ` — до ${formatDeadline(item.deadline)}` : "";
     const fullLine = `${item.id}. ${mark} ${escapeHtml(item.text)}${deadline}`;
 
-    if (fits(lines, fullLine)) {
-      lines.push(fullLine);
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const block = formatItem(item, index + 1, archive);
+    const candidate = [...lines, ...(lines.length > 2 ? ["", block] : [block])].join("\n");
+    if (candidate.length <= TELEGRAM_MESSAGE_LIMIT) {
+      if (lines.length > 2) lines.push("");
+      lines.push(block);
       continue;
     }
-
-    const remaining = topic.items.length - index;
-    const warning = `⚠️ Ещё ${remaining} ${pluralizeItems(remaining)} скрыто из-за ограничения Telegram на длину сообщения.`;
-    if (fits(lines, warning)) lines.push(warning);
-    hiddenItems = remaining;
+    lines.push(`⚠️ Ещё ${items.length - index} ${pluralizeItems(items.length - index)} скрыто из-за ограничения Telegram.`);
     break;
   }
-
-  if (hiddenItems > 0 && lines.length === 2) {
-    lines.push(`⚠️ Список слишком большой: ${hiddenItems} ${pluralizeItems(hiddenItems)} скрыто.`);
-  }
-
   return lines.join("\n");
+}
+
+function formatItem(item: HomeworkItem, number: number, archive: boolean): string {
+  const mark = item.completed ? "✅" : "⬜";
+  const deadline = item.deadline ? `\n⏰ до ${formatDeadline(item.deadline)}` : "";
+  const archived = archive ? "\n✅ Архивировано" : "";
+  return `${number}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${escapeHtml(item.description)}\n👥 ${subgroupLabel(item.subgroup)}${deadline}${archived}`;
+}
+
+export function subgroupLabel(subgroup: HomeworkSubgroup): string {
+  if (subgroup === "GROUP_1") return "1 подгруппа";
+  if (subgroup === "GROUP_2") return "2 подгруппа";
+  return "Все";
+}
+
+export function formatDeadline(deadline: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(deadline.getDate())}.${pad(deadline.getMonth() + 1)}.${deadline.getFullYear()} ${pad(deadline.getHours())}:${pad(deadline.getMinutes())}`;
 }
 
 function formatDeadline(value: Date): string {
@@ -54,9 +105,5 @@ function pluralizeItems(count: number): string {
 }
 
 function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }

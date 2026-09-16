@@ -7,6 +7,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum HomeworkType {
+  IRNITU
+  MIPT
+}
+
+enum HomeworkSubgroup {
+  ALL
+  GROUP_1
+  GROUP_2
+}
+
+enum PersistentMessageType {
+  ACTIVE
+  ARCHIVE
+}
+
 model TelegramGroup {
   id        Int      @id @default(autoincrement())
   chatId    BigInt   @unique
@@ -18,45 +34,65 @@ model TelegramGroup {
 }
 
 model Topic {
-  id               Int          @id @default(autoincrement())
+  id               Int                 @id @default(autoincrement())
   groupId          Int
   messageThreadId  Int
   name             String?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
-  group            TelegramGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  homeworkList     HomeworkList?
+  group             TelegramGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  homeworkLists     HomeworkList[]
+  persistentMessages PersistentMessage[]
 
   @@unique([groupId, messageThreadId])
   @@index([groupId])
 }
 
 model TelegramUser {
-  id          Int      @id @default(autoincrement())
-  telegramId  BigInt   @unique
+  id          Int              @id @default(autoincrement())
+  telegramId  BigInt           @unique
   username    String?
   firstName   String?
   lastName    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  subgroup    HomeworkSubgroup?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   authoredHomework HomeworkItem[] @relation("HomeworkAuthor")
 }
 
 model HomeworkList {
   id               Int           @id @default(autoincrement())
-  topicId          Int           @unique
+  topicId          Int
+  type             HomeworkType  @default(IRNITU)
   primaryMessageId Int?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
   topic            Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
   items            HomeworkItem[]
+
+  @@unique([topicId, type])
+  @@index([topicId])
+}
+
+model PersistentMessage {
+  id          Int                   @id @default(autoincrement())
+  topicId     Int
+  messageType PersistentMessageType
+  messageId   Int
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, messageType])
+  @@index([topicId])
 }
 
 model HomeworkItem {
-  id          Int           @id @default(autoincrement())
+  id          Int              @id @default(autoincrement())
   listId      Int
   authorId    Int
   text        String
@@ -72,4 +108,5 @@ model HomeworkItem {
   @@index([listId, createdAt])
   @@index([listId, archived, deadline])
   @@index([authorId])
+  @@index([deadline, archived])
 }
