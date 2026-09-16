@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Prisma } from "@prisma/client";
 import type { HomeworkItem, TelegramUserInput, TopicHomework } from "./types.js";
 
 export class HomeworkStore {
@@ -19,18 +19,14 @@ export class HomeworkStore {
         messageThreadId: threadId,
       },
       include: {
+        group: true,
         homeworkList: {
-          include: {
-            items: { orderBy: { id: "asc" } },
-          },
+          include: { items: { orderBy: { id: "asc" } } },
         },
       },
     });
 
-    if (!topic?.homeworkList) {
-      return this.ensureTopic(chatId, threadId);
-    }
-
+    if (!topic?.homeworkList) return this.ensureTopic(chatId, threadId);
     return this.toTopicHomework(topic);
   }
 
@@ -56,9 +52,7 @@ export class HomeworkStore {
     const topic = await this.getTopicRecord(chatId, threadId);
     if (!topic) return false;
 
-    const result = await this.prisma.homeworkItem.deleteMany({
-      where: { id, listId: topic.homeworkList.id },
-    });
+    const result = await this.prisma.homeworkItem.deleteMany({ where: { id, listId: topic.homeworkList.id } });
     return result.count === 1;
   }
 
@@ -69,10 +63,7 @@ export class HomeworkStore {
     const item = await this.prisma.homeworkItem.findFirst({ where: { id, listId: topic.homeworkList.id } });
     if (!item) return null;
 
-    return this.prisma.homeworkItem.update({
-      where: { id },
-      data: { completed: !item.completed },
-    });
+    return this.prisma.homeworkItem.update({ where: { id }, data: { completed: !item.completed } });
   }
 
   async setMessageId(chatId: number, threadId: number, messageId: number | null): Promise<void> {
@@ -93,7 +84,10 @@ export class HomeworkStore {
       const { list } = await this.ensureContext(tx, chatId, threadId);
       const topic = await tx.topic.findUniqueOrThrow({
         where: { id: list.topicId },
-        include: { homeworkList: { include: { items: { orderBy: { id: "asc" } } } } },
+        include: {
+          group: true,
+          homeworkList: { include: { items: { orderBy: { id: "asc" } } } },
+        },
       });
       return this.toTopicHomework(topic);
     });
@@ -107,7 +101,7 @@ export class HomeworkStore {
   }
 
   private async ensureContext(
-    tx: PrismaClient | Parameters<PrismaClient["$transaction"]>[0] extends never ? never : any,
+    tx: Prisma.TransactionClient,
     chatId: number,
     threadId: number,
     author?: TelegramUserInput,
@@ -130,47 +124,35 @@ export class HomeworkStore {
       create: { topicId: topic.id },
     });
 
-    let userId: number | undefined;
-    if (author) {
-      const user = await tx.telegramUser.upsert({
-        where: { telegramId: BigInt(author.telegramId) },
-        update: {
-          username: author.username,
-          firstName: author.firstName,
-          lastName: author.lastName,
-        },
-        create: {
-          telegramId: BigInt(author.telegramId),
-          username: author.username,
-          firstName: author.firstName,
-          lastName: author.lastName,
-        },
-      });
-      userId = user.id;
-    }
+    if (!author) return { list, userId: undefined };
 
-    return { list, userId };
+    const user = await tx.telegramUser.upsert({
+      where: { telegramId: BigInt(author.telegramId) },
+      update: {
+        username: author.username,
+        firstName: author.firstName,
+        lastName: author.lastName,
+      },
+      create: {
+        telegramId: BigInt(author.telegramId),
+        username: author.username,
+        firstName: author.firstName,
+        lastName: author.lastName,
+      },
+    });
+
+    return { list, userId: user.id };
   }
 
   private toTopicHomework(topic: {
-    groupId: number;
     messageThreadId: number;
-    group?: { chatId: bigint };
+    group: { chatId: bigint };
     homeworkList: {
       primaryMessageId: number | null;
-      items: Array<{
-        id: number;
-        text: string;
-        completed: boolean;
-        authorId: number;
-        createdAt: Date;
-        updatedAt: Date;
-      }>;
+      items: Array<HomeworkItem>;
     } | null;
   }): TopicHomework {
-    if (!topic.homeworkList || !topic.group) {
-      throw new Error("Topic is missing its homework list or group");
-    }
+    if (!topic.homeworkList) throw new Error("Topic is missing its homework list");
 
     return {
       chatId: Number(topic.group.chatId),
