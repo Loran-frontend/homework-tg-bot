@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: homework-tg-bot
+    runtime: node
+    plan: free
+    buildCommand: yarn install --production=false && yarn prisma:deploy && yarn build
+    startCommand: yarn start
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: NODE_ENV
+        value: production
+      - key: WEBHOOK_SECRET
+        sync: false

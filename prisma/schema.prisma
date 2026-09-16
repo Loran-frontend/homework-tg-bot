@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum HomeworkType {
+  IRNITU
+  MIPT
+}
+
+enum HomeworkSubgroup {
+  ALL
+  GROUP_1
+  GROUP_2
+}
+
+enum PersistentMessageType {
+  ACTIVE
+  ARCHIVE
+}
+
+model TelegramGroup {
+  id        Int      @id @default(autoincrement())
+  chatId    BigInt   @unique
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  topics    Topic[]
+}
+
+model Topic {
+  id               Int                 @id @default(autoincrement())
+  groupId          Int
+  messageThreadId  Int
+  name             String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  group             TelegramGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  homeworkLists     HomeworkList[]
+  persistentMessages PersistentMessage[]
+
+  @@unique([groupId, messageThreadId])
+  @@index([groupId])
+}
+
+model TelegramUser {
+  id          Int              @id @default(autoincrement())
+  telegramId  BigInt           @unique
+  username    String?
+  firstName   String?
+  lastName    String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  authoredHomework HomeworkItem[] @relation("HomeworkAuthor")
+}
+
+model HomeworkList {
+  id               Int           @id @default(autoincrement())
+  topicId          Int
+  type             HomeworkType  @default(IRNITU)
+  primaryMessageId Int?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  topic            Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  items            HomeworkItem[]
+
+  @@unique([topicId, type])
+  @@index([topicId])
+}
+
+model PersistentMessage {
+  id                  Int                   @id @default(autoincrement())
+  topicId             Int
+  messageType         PersistentMessageType
+  messageId           Int
+  destinationChatId   BigInt?
+  destinationThreadId Int?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, messageType])
+  @@index([topicId])
+}
+
+model OutputMessage {
+  id                Int                  @id @default(autoincrement())
+  messageType       PersistentMessageType @unique
+  messageId         Int                  @default(0)
+  destinationChatId BigInt?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+}
+
+model OutputMessageDestination {
+  id                  Int                   @id @default(autoincrement())
+  messageType         PersistentMessageType @unique
+  destinationChatId   BigInt
+  destinationThreadId Int?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+}
+
+model HomeworkItem {
+  id          Int              @id @default(autoincrement())
+  listId      Int
+  authorId    Int
+  subject     String           @default("Вычислительная математика")
+  description String           @default("")
+  subgroup    HomeworkSubgroup @default(ALL)
+  deadline    DateTime?
+  archived    Boolean          @default(false)
+  completed   Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  list        HomeworkList  @relation(fields: [listId], references: [id], onDelete: Cascade)
+  author      TelegramUser  @relation("HomeworkAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([listId, createdAt])
+  @@index([listId, archived, deadline])
+  @@index([authorId])
+  @@index([deadline, archived])
+}

@@ -34,10 +34,6 @@ async function refreshOutputMessage(bot: Bot, store: HomeworkStore, topic: Topic
           await bot.api.editMessageText(destinationChatId, messageId, text, { parse_mode: "HTML" });
           return;
         } catch (error) {
-          // Telegram returns MESSAGE_NOT_MODIFIED when the persistent message
-          // already contains exactly this text. That is a successful refresh,
-          // not a reason to create a second message.
-          if (isMessageNotModifiedError(error)) return;
           console.warn(`Could not edit ${messageType} output message:`, error);
         }
       }
@@ -56,15 +52,5 @@ async function refreshOutputMessage(bot: Bot, store: HomeworkStore, topic: Topic
   });
 
   refreshLocks.set(lockKey, next);
-  try {
-    await next;
-  } finally {
-    if (refreshLocks.get(lockKey) === next) refreshLocks.delete(lockKey);
-  }
-}
-
-function isMessageNotModifiedError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const description = "description" in error && typeof error.description === "string" ? error.description : "";
-  return description.includes("MESSAGE_NOT_MODIFIED");
+  try { await next; } finally { if (refreshLocks.get(lockKey) === next) refreshLocks.delete(lockKey); }
 }
