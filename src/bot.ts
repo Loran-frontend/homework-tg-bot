@@ -140,178 +140,103 @@ export function createBot(token: string, store: HomeworkStore): Bot {
         return;
       }
 
-      await store.add(topic.chatId, topic.threadId, { type, subject, description, subgroup, deadline: state.deadline }, userInput(ctx));
+      await store.addHomework(topic, type, subject, description, subgroup, state.deadline, userInput(ctx));
       addStates.delete(stateKey(topic, userId));
       await refreshOutputMessages(ctx, store, topic);
+      await replyInTopic(ctx, "✅ ДЗ добавлено.", topic);
     });
   });
 
   bot.command("edit", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const parsed = parseEditCommand(ctx.match);
-    if (!parsed) { await replyInTopic(ctx, "Использование: /edit <номер> <новый текст>", command.topic); return; }
-    if (!(await store.edit(command.topic.chatId, command.topic.threadId, parsed.id, parsed.text))) {
-      await replyInTopic(ctx, "ДЗ с таким номером не найдено.", command.topic); return;
-    }
+    if (!parsed) throw new Error("Использование: /edit <номер> <новый текст>");
+    await store.editHomework(command.topic, parsed.id, parsed.text, command.userId, userInput(ctx));
     await refreshOutputMessages(ctx, store, command.topic);
+    await replyInTopic(ctx, "✅ ДЗ изменено.", command.topic);
   }));
 
   bot.command("delete", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const id = parseId(ctx.match);
-    if (id === null) { await replyInTopic(ctx, "Использование: /delete <номер>", command.topic); return; }
-    const result = await store.remove(command.topic.chatId, command.topic.threadId, id);
-    if (!result.removed) { await replyInTopic(ctx, "ДЗ с таким номером не найдено.", command.topic); return; }
+    if (id === null) throw new Error("Использование: /delete <номер>");
+    await store.deleteHomework(command.topic, id, command.userId, userInput(ctx));
     await refreshOutputMessages(ctx, store, command.topic);
-  }));
-
-  bot.command("list", async (ctx) => runCommand(ctx, async () => {
-    const command = getCommandContext(ctx);
-    await refreshOutputMessages(ctx, store, command.topic);
+    await replyInTopic(ctx, "🗑 ДЗ удалено.", command.topic);
   }));
 
   bot.command("done", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const id = parseId(ctx.match);
-    if (id === null) { await replyInTopic(ctx, "Использование: /done <номер>", command.topic); return; }
-    const result = await store.markDone(command.topic.chatId, command.topic.threadId, id);
-    if (!result) { await replyInTopic(ctx, "ДЗ с таким номером не найдено.", command.topic); return; }
+    if (id === null) throw new Error("Использование: /done <номер>");
+    await store.completeHomework(command.topic, id, command.userId, userInput(ctx));
     await refreshOutputMessages(ctx, store, command.topic);
+    await replyInTopic(ctx, "✅ ДЗ отмечено выполненным.", command.topic);
+  }));
+
+  bot.command("list", async (ctx) => runCommand(ctx, async () => {
+    const command = getCommandContext(ctx);
+    await refreshOutputMessages(ctx, store, command.topic);
+    await replyInTopic(ctx, "🔄 Списки ДЗ обновлены.", command.topic);
   }));
 
   return bot;
 }
 
-async function configureOutputDestination(ctx: Context, store: HomeworkStore, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
-  const previous = await store.getOutputMessageInfo(messageType);
-  if (previous?.messageId && previous.messageId > 0) {
-    const oldChatId = previous.destinationChatId;
-    if (oldChatId !== null) {
-      try { await ctx.api.deleteMessage(oldChatId, previous.messageId); } catch (error) { console.warn(`Could not delete old ${messageType} message:`, error); }
-    }
-  }
-  await store.setOutputDestination(messageType, destinationChatId);
+function getTopic(ctx: Context): Topic {
+  return { chatId: Number(ctx.chat?.id ?? 0), threadId: Number(ctx.msg?.message_thread_id ?? 0) };
 }
 
-function parseDestinationChatId(value: string, fallbackChatId: number): number {
-  const normalized = value.trim();
-  if (!normalized || normalized === "here") return fallbackChatId;
-  const chatId = Number(normalized);
-  if (!Number.isSafeInteger(chatId) || chatId === 0) throw new Error("Неверный chat_id. Используйте /setactive <chat_id> или слово here.");
-  return chatId;
+function getTopicFromMessage(ctx: Context): Topic | null {
+  if (!ctx.chat) return null;
+  return { chatId: Number(ctx.chat.id), threadId: Number(ctx.message?.message_thread_id ?? 0) };
 }
 
-async function refreshOutputMessages(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
-  await refreshOutputMessage(ctx, store, topic, "ACTIVE");
-  await refreshOutputMessage(ctx, store, topic, "ARCHIVE");
-}
-
-async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType): Promise<void> {
-  const key = `global:${messageType}`;
-  const previous = refreshLocks.get(key) ?? Promise.resolve();
-  const current = previous.then(async () => {
-    const data = await store.getOutputMessages();
-    const text = formatPersistentMessages(data)[messageType === "ACTIVE" ? "active" : "archive"];
-
-    await store.withOutputMessageLock(messageType, async (savedMessageId, savedDestinationChatId, setMessage) => {
-      const targetChatId = savedDestinationChatId ?? topic.chatId;
-      if (savedMessageId) {
-        try {
-          await ctx.api.editMessageText(targetChatId, savedMessageId, text, { parse_mode: "HTML" });
-          return;
-        } catch (error) {
-          const description = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-          if (description.includes("message is not modified")) return;
-          if (!description.includes("message to edit not found") && !description.includes("message can't be edited")) throw error;
-        }
-      }
-
-      const options = savedDestinationChatId === targetChatId
-        ? { message_thread_id: topic.threadId, parse_mode: "HTML" as const }
-        : { parse_mode: "HTML" as const };
-      const message = await ctx.api.sendMessage(targetChatId, text, options);
-      await setMessage(message.message_id);
-      await ctx.api.pinChatMessage(targetChatId, message.message_id, { disable_notification: true });
-    });
-  });
-  refreshLocks.set(key, current);
-  try { await current; } finally { if (refreshLocks.get(key) === current) refreshLocks.delete(key); }
-}
-
-async function replyInTopic(ctx: Context, text: string, topic?: Topic, reply_markup?: InlineKeyboard): Promise<void> {
-  const target = topic ?? getTopic(ctx);
-  await ctx.api.sendMessage(target.chatId, text, { message_thread_id: target.threadId, ...(reply_markup ? { reply_markup } : {}) });
-}
-
-export async function refreshMessage(api: Context["api"], store: HomeworkStore, topic: Topic): Promise<void> {
-  const context = { api } as Context;
-  await refreshOutputMessages(context, store, topic);
-}
-
-function subgroupKeyboard(prefix: string): InlineKeyboard {
-  return new InlineKeyboard().text("Все", `${prefix}ALL`).text("1 подгруппа", `${prefix}GROUP_1`).text("2 подгруппа", `${prefix}GROUP_2`);
-}
-
-function stateKey(topic: Topic, userId: number): string { return `${topic.chatId}:${topic.threadId}:${userId}`; }
-
-function getAddState(ctx: Context): AddState {
-  const command = getCallbackContext(ctx);
-  const state = addStates.get(stateKey(command.topic, command.userId));
-  if (!state) throw new Error("Сессия добавления ДЗ истекла. Запустите /add снова.");
-  return state;
+function getCommandContext(ctx: Context): CommandContext {
+  return { topic: getTopic(ctx), userId: getUserId(ctx) };
 }
 
 function getCallbackContext(ctx: Context): CommandContext {
   const message = ctx.callbackQuery?.message;
-  if (!message || message.chat.type !== "supergroup" || !("message_thread_id" in message) || message.message_thread_id === undefined) throw new Error("Выбор должен выполняться внутри Topic.");
-  return { topic: { chatId: message.chat.id, threadId: message.message_thread_id }, userId: getUserId(ctx) };
+  if (!message) throw new Error("Команда доступна только в сообщении.");
+  return { topic: { chatId: Number(message.chat.id), threadId: Number(message.message_thread_id ?? 0) }, userId: getUserId(ctx) };
 }
 
-function getCallbackData(ctx: Context): string {
-  const data = ctx.callbackQuery?.data;
-  if (!data) throw new Error("Некорректный callback-запрос.");
-  return data;
+function getAddState(ctx: Context): AddState {
+  const command = getCallbackContext(ctx);
+  const state = addStates.get(stateKey(command.topic, command.userId));
+  if (!state) throw new Error("Сессия добавления ДЗ не найдена. Повторите /add.");
+  return state;
 }
 
-function getCommandContext(ctx: Context): CommandContext { return { topic: getTopic(ctx), userId: getUserId(ctx) }; }
-
-function getTopic(ctx: Context): Topic {
-  const topic = getTopicFromMessage(ctx);
-  if (!topic) throw new Error("Команда должна быть отправлена внутри Telegram Topic.");
-  return topic;
-}
-
-function getTopicFromMessage(ctx: Context): Topic | null {
-  const message = ctx.message;
-  if (!message || message.chat.type !== "supergroup") return null;
-  if (!("message_thread_id" in message) || message.message_thread_id === undefined) return null;
-  return { chatId: message.chat.id, threadId: message.message_thread_id };
+function stateKey(topic: Topic, userId: number): string {
+  return `${topic.chatId}:${topic.threadId}:${userId}`;
 }
 
 function getUserId(ctx: Context): number {
-  const user = ctx.from;
-  if (!user) throw new Error("Не удалось определить пользователя.");
-  return user.id;
+  const id = ctx.from?.id;
+  if (!id) throw new Error("Не удалось определить пользователя.");
+  return Number(id);
 }
 
-function userInput(ctx: Context) {
+function userInput(ctx: Context): { telegramId: number; username?: string; firstName?: string; lastName?: string } {
   const user = ctx.from;
   if (!user) throw new Error("Не удалось определить пользователя.");
   return { telegramId: user.id, username: user.username, firstName: user.first_name, lastName: user.last_name };
 }
 
-function parseId(value: string): number | null {
+export function parseId(value: string): number | null {
   const id = Number(value.trim());
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-function parseEditCommand(value: string): { id: number; text: string } | null {
+export function parseEditCommand(value: string): { id: number; text: string } | null {
   const match = value.trim().match(/^(\d+)\s+(.+)$/s);
   if (!match) return null;
   return { id: Number(match[1]), text: match[2].trim() };
 }
 
-function parseDeadline(value: string): Date | null {
+export function parseDeadline(value: string): Date | null {
   const match = value.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
   if (!match) return null;
   const [, day, month, year, hours, minutes] = match;
@@ -327,4 +252,64 @@ async function runCommand(ctx: Context, action: () => Promise<void>): Promise<vo
     const text = error instanceof Error ? error.message : "Произошла ошибка.";
     try { await replyInTopic(ctx, `❌ ${text}`); } catch { await ctx.reply(`❌ ${text}`); }
   }
+}
+
+async function replyInTopic(ctx: Context, text: string, topic?: Topic, reply_markup?: InlineKeyboard): Promise<void> {
+  const target = topic ?? getTopic(ctx);
+  await ctx.api.sendMessage(target.chatId, text, { message_thread_id: target.threadId, ...(reply_markup ? { reply_markup } : {}) });
+}
+
+function getCallbackData(ctx: Context): string {
+  return ctx.callbackQuery?.data ?? "";
+}
+
+function subgroupKeyboard(prefix: string): InlineKeyboard {
+  return new InlineKeyboard().text("Все", `${prefix}ALL`).row().text("1 подгруппа", `${prefix}GROUP_1`).row().text("2 подгруппа", `${prefix}GROUP_2`);
+}
+
+function parseDestinationChatId(value: string, currentChatId: number): number {
+  const normalized = value.trim();
+  if (!normalized || normalized === "here") return currentChatId;
+  const id = Number(normalized);
+  if (!Number.isSafeInteger(id) || id === 0) throw new Error("Некорректный chat_id.");
+  return id;
+}
+
+async function configureOutputDestination(ctx: Context, store: HomeworkStore, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
+  const previous = await store.getOutputMessageInfo(messageType);
+  if (previous?.messageId && previous.destinationChatId !== null) {
+    try { await ctx.api.deleteMessage(previous.destinationChatId, previous.messageId); } catch { /* message may already be deleted */ }
+  }
+  await store.setOutputDestination(messageType, destinationChatId);
+}
+
+async function refreshOutputMessages(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
+  await refreshOutputMessage(ctx, store, topic, "ACTIVE");
+  await refreshOutputMessage(ctx, store, topic, "ARCHIVE");
+}
+
+async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType): Promise<void> {
+  const lockKey = messageType;
+  const previous = refreshLocks.get(lockKey) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    const data = await store.getOutputMessages();
+    const text = formatPersistentMessages(data)[messageType === "ACTIVE" ? "active" : "archive"];
+    await store.withOutputMessageLock(messageType, async (messageId, savedDestinationChatId, setMessage) => {
+      const targetChatId = savedDestinationChatId ?? topic.chatId;
+      if (messageId && savedDestinationChatId !== null) {
+        try {
+          await ctx.api.editMessageText(savedDestinationChatId, messageId, text, { parse_mode: "HTML" });
+          return;
+        } catch (error) {
+          console.warn(`Could not edit ${messageType} output message:`, error);
+        }
+      }
+      const options = savedDestinationChatId === targetChatId ? { message_thread_id: topic.threadId, parse_mode: "HTML" as const } : { parse_mode: "HTML" as const };
+      const message = await ctx.api.sendMessage(targetChatId, text, options);
+      await setMessage(message.message_id);
+      try { await ctx.api.pinChatMessage(targetChatId, message.message_id, { disable_notification: true }); } catch (error) { console.warn(`Could not pin ${messageType} output message:`, error); }
+    });
+  });
+  refreshLocks.set(lockKey, next);
+  try { await next; } finally { if (refreshLocks.get(lockKey) === next) refreshLocks.delete(lockKey); }
 }
