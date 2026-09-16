@@ -60,6 +60,8 @@ model HomeworkItem {
   listId      Int
   authorId    Int
   text        String
+  deadline    DateTime?
+  archived    Boolean       @default(false)
   completed   Boolean       @default(false)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
@@ -68,5 +70,6 @@ model HomeworkItem {
   author      TelegramUser  @relation("HomeworkAuthor", fields: [authorId], references: [id], onDelete: Restrict)
 
   @@index([listId, createdAt])
+  @@index([listId, archived, deadline])
   @@index([authorId])
 }

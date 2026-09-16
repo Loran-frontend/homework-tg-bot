@@ -2,7 +2,7 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { PrismaClient } from "@prisma/client";
 import { webhookCallback } from "grammy";
-import { createBot } from "./bot.js";
+import { createBot, refreshMessage } from "./bot.js";
 import { HomeworkStore } from "./store.js";
 
 const token = process.env.BOT_TOKEN;
@@ -36,6 +36,21 @@ bot.catch((error) => {
   console.error("Telegram bot error:", error.error);
 });
 
+const archiveExpiredHomework = async () => {
+  try {
+    const topics = await store.archiveExpired();
+    for (const topic of topics) {
+      await refreshMessage(bot.api, store, topic);
+    }
+  } catch (error) {
+    console.error("Failed to archive expired homework:", error);
+  }
+};
+
+await archiveExpiredHomework();
+const archiveTimer = setInterval(() => void archiveExpiredHomework(), 30_000);
+archiveTimer.unref();
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
@@ -64,6 +79,7 @@ const server = createServer(async (req, res) => {
 
 const shutdown = async (signal: string) => {
   console.log(`Received ${signal}, shutting down...`);
+  clearInterval(archiveTimer);
 
   if (!isRender) {
     await bot.stop();

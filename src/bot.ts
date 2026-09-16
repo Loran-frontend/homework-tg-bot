@@ -4,7 +4,7 @@ import { formatHomework } from "./format.js";
 
 const COMMAND_HELP = [
   "Команды:",
-  "/add <текст> — добавить ДЗ",
+  "/add <текст> | <ДД.ММ.ГГГГ ЧЧ:ММ> — добавить ДЗ с дедлайном",
   "/edit <номер> <текст> — изменить ДЗ",
   "/delete <номер> — удалить ДЗ",
   "/list — показать список",
@@ -22,19 +22,19 @@ export function createBot(token: string, store: HomeworkStore): Bot {
 
   bot.command("add", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
-    const text = ctx.match.trim();
-    if (!text) {
-      await replyInTopic(ctx, "Использование: /add <текст ДЗ>", command.topic);
+    const parsed = parseAddCommand(ctx.match);
+    if (!parsed) {
+      await replyInTopic(ctx, "Использование: /add <текст ДЗ> | <ДД.ММ.ГГГГ ЧЧ:ММ>\nНапример: /add Решить задачи 1-10 | 25.09.2026 23:59", command.topic);
       return;
     }
 
-    await store.add(command.topic.chatId, command.topic.threadId, text, {
+    await store.add(command.topic.chatId, command.topic.threadId, parsed.text, {
       telegramId: command.userId,
       username: ctx.from?.username,
       firstName: ctx.from?.first_name,
       lastName: ctx.from?.last_name,
-    });
-    await refreshMessage(ctx, store, command.topic);
+    }, parsed.deadline);
+    await refreshMessage(ctx.api, store, command.topic);
   }));
 
   bot.command("edit", async (ctx) => runCommand(ctx, async () => {
@@ -50,7 +50,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       await replyInTopic(ctx, "ДЗ с таким номером не найдено в этом topic.", command.topic);
       return;
     }
-    await refreshMessage(ctx, store, command.topic);
+    await refreshMessage(ctx.api, store, command.topic);
   }));
 
   bot.command("delete", async (ctx) => runCommand(ctx, async () => {
@@ -65,7 +65,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       await replyInTopic(ctx, "ДЗ с таким номером не найдено в этом topic.", command.topic);
       return;
     }
-    await refreshMessage(ctx, store, command.topic);
+    await refreshMessage(ctx.api, store, command.topic);
   }));
 
   bot.command("list", async (ctx) => runCommand(ctx, async () => {
@@ -74,7 +74,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       await replyInTopic(ctx, "Использование: /list", command.topic);
       return;
     }
-    await refreshMessage(ctx, store, command.topic);
+    await refreshMessage(ctx.api, store, command.topic);
   }));
 
   bot.command("done", async (ctx) => runCommand(ctx, async () => {
@@ -94,7 +94,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       await replyInTopic(ctx, "Это ДЗ уже отмечено как выполненное.", command.topic);
       return;
     }
-    await refreshMessage(ctx, store, command.topic);
+    await refreshMessage(ctx.api, store, command.topic);
   }));
 
   return bot;
@@ -160,10 +160,10 @@ async function replyInTopic(ctx: Context, text: string, topic?: Topic): Promise<
   await ctx.api.sendMessage(target.chatId, text, { message_thread_id: target.threadId });
 }
 
-async function refreshMessage(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
+export async function refreshMessage(api: Context["api"], store: HomeworkStore, topic: Topic): Promise<void> {
   const key = `${topic.chatId}:${topic.threadId}`;
   const previous = refreshLocks.get(key) ?? Promise.resolve();
-  const current = previous.then(() => refreshMessageUnsafe(ctx, store, topic));
+  const current = previous.then(() => refreshMessageUnsafe(api, store, topic));
   refreshLocks.set(key, current);
   try {
     await current;
@@ -172,13 +172,13 @@ async function refreshMessage(ctx: Context, store: HomeworkStore, topic: Topic):
   }
 }
 
-async function refreshMessageUnsafe(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
+async function refreshMessageUnsafe(api: Context["api"], store: HomeworkStore, topic: Topic): Promise<void> {
   const data = await store.getTopic(topic.chatId, topic.threadId);
   const text = formatHomework(data);
 
   if (data.messageId) {
     try {
-      await ctx.api.editMessageText(topic.chatId, data.messageId, text, { parse_mode: "HTML" });
+      await api.editMessageText(topic.chatId, data.messageId, text, { parse_mode: "HTML" });
       return;
     } catch (error) {
       const description = getTelegramErrorDescription(error);
@@ -189,7 +189,7 @@ async function refreshMessageUnsafe(ctx: Context, store: HomeworkStore, topic: T
     }
   }
 
-  const message = await ctx.api.sendMessage(topic.chatId, text, {
+  const message = await api.sendMessage(topic.chatId, text, {
     message_thread_id: topic.threadId,
     parse_mode: "HTML",
   });
@@ -223,4 +223,36 @@ export function parseEditCommand(value: string): { id: number; text: string } | 
   const text = match[2].trim();
   if (id === null || !text) return null;
   return { id, text };
+}
+
+export function parseAddCommand(value: string): { text: string; deadline?: Date } | null {
+  const input = value.trim();
+  if (!input) return null;
+
+  const separator = input.lastIndexOf("|");
+  if (separator === -1) return { text: input };
+
+  const text = input.slice(0, separator).trim();
+  const deadlineText = input.slice(separator + 1).trim();
+  if (!text || !deadlineText) return null;
+
+  const deadline = parseDeadline(deadlineText);
+  if (!deadline) return null;
+  return { text, deadline };
+}
+
+export function parseDeadline(value: string): Date | null {
+  const match = value.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (!match) return null;
+
+  const [, day, month, year, hours, minutes] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes)));
+  if (date.getUTCFullYear() !== Number(year) ||
+      date.getUTCMonth() !== Number(month) - 1 ||
+      date.getUTCDate() !== Number(day) ||
+      date.getUTCHours() !== Number(hours) ||
+      date.getUTCMinutes() !== Number(minutes)) {
+    return null;
+  }
+  return date;
 }

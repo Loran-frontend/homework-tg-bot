@@ -13,11 +13,19 @@ export class HomeworkStore {
   }
 
   async getTopic(chatId: number, threadId: number): Promise<TopicHomework> {
+    const now = new Date();
     const topic = await this.prisma.topic.findFirst({
       where: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId },
       include: {
         group: true,
-        homeworkList: { include: { items: { orderBy: { id: "asc" } } } },
+        homeworkList: {
+          include: {
+            items: {
+              where: { archived: false, OR: [{ deadline: null }, { deadline: { gt: now } }] },
+              orderBy: { id: "asc" },
+            },
+          },
+        },
       },
     });
 
@@ -25,11 +33,11 @@ export class HomeworkStore {
     return this.toTopicHomework(topic);
   }
 
-  async add(chatId: number, threadId: number, text: string, author: TelegramUserInput): Promise<HomeworkItem> {
+  async add(chatId: number, threadId: number, text: string, author: TelegramUserInput, deadline?: Date): Promise<HomeworkItem> {
     return this.prisma.$transaction(async (tx) => {
       const { list, userId } = await this.ensureContext(tx, chatId, threadId, author);
       if (userId === undefined) throw new Error("Homework author is required");
-      return tx.homeworkItem.create({ data: { listId: list.id, authorId: userId, text } });
+      return tx.homeworkItem.create({ data: { listId: list.id, authorId: userId, text, deadline } });
     });
   }
 
@@ -37,7 +45,7 @@ export class HomeworkStore {
     const topic = await this.getTopicRecord(chatId, threadId);
     if (!topic?.homeworkList) return null;
 
-    const item = await this.prisma.homeworkItem.findFirst({ where: { id, listId: topic.homeworkList.id } });
+    const item = await this.prisma.homeworkItem.findFirst({ where: { id, listId: topic.homeworkList.id, archived: false } });
     if (!item) return null;
     return this.prisma.homeworkItem.update({ where: { id }, data: { text } });
   }
@@ -46,7 +54,7 @@ export class HomeworkStore {
     const topic = await this.getTopicRecord(chatId, threadId);
     if (!topic?.homeworkList) return false;
 
-    const result = await this.prisma.homeworkItem.deleteMany({ where: { id, listId: topic.homeworkList.id } });
+    const result = await this.prisma.homeworkItem.deleteMany({ where: { id, listId: topic.homeworkList.id, archived: false } });
     return result.count === 1;
   }
 
@@ -55,7 +63,7 @@ export class HomeworkStore {
     if (!topic?.homeworkList) return null;
 
     const item = await this.prisma.homeworkItem.findFirst({
-      where: { id, listId: topic.homeworkList.id },
+      where: { id, listId: topic.homeworkList.id, archived: false },
     });
     if (!item) return null;
     if (item.completed) return { item, alreadyDone: true };
@@ -65,6 +73,28 @@ export class HomeworkStore {
       data: { completed: true },
     });
     return { item: updated, alreadyDone: false };
+  }
+
+  async archiveExpired(now = new Date()): Promise<Array<{ chatId: number; threadId: number }>> {
+    const dueItems = await this.prisma.homeworkItem.findMany({
+      where: { archived: false, deadline: { lte: now } },
+      select: { id: true, list: { select: { topic: { select: { messageThreadId: true, group: { select: { chatId: true } } } } } } },
+    });
+
+    if (dueItems.length === 0) return [];
+
+    await this.prisma.homeworkItem.updateMany({
+      where: { id: { in: dueItems.map((item) => item.id) }, archived: false, deadline: { lte: now } },
+      data: { archived: true },
+    });
+
+    const topics = new Map<string, { chatId: number; threadId: number }>();
+    for (const item of dueItems) {
+      const topic = item.list.topic;
+      const chatId = Number(topic.group.chatId);
+      topics.set(`${chatId}:${topic.messageThreadId}`, { chatId, threadId: topic.messageThreadId });
+    }
+    return [...topics.values()];
   }
 
   async setMessageId(chatId: number, threadId: number, messageId: number | null): Promise<void> {
@@ -87,7 +117,7 @@ export class HomeworkStore {
         where: { id: list.topicId },
         include: {
           group: true,
-          homeworkList: { include: { items: { orderBy: { id: "asc" } } } },
+          homeworkList: { include: { items: { where: { archived: false }, orderBy: { id: "asc" } } } },
         },
       });
       return this.toTopicHomework(topic);

@@ -8,6 +8,8 @@ export interface TelegramUserInput {
 export interface HomeworkItem {
   id: number;
   text: string;
+  deadline: Date | null;
+  archived: boolean;
   completed: boolean;
   authorId: number;
   createdAt: Date;

@@ -14,7 +14,8 @@ export function formatHomework(topic: TopicHomework): string {
   for (let index = 0; index < topic.items.length; index += 1) {
     const item = topic.items[index];
     const mark = item.completed ? "✅" : "⬜";
-    const fullLine = `${item.id}. ${mark} ${escapeHtml(item.text)}`;
+    const deadline = item.deadline ? ` — до ${formatDeadline(item.deadline)}` : "";
+    const fullLine = `${item.id}. ${mark} ${escapeHtml(item.text)}${deadline}`;
 
     if (fits(lines, fullLine)) {
       lines.push(fullLine);
@@ -33,6 +34,11 @@ export function formatHomework(topic: TopicHomework): string {
   }
 
   return lines.join("\n");
+}
+
+function formatDeadline(value: Date): string {
+  const pad = (number: number) => String(number).padStart(2, "0");
+  return `${pad(value.getUTCDate())}.${pad(value.getUTCMonth() + 1)}.${value.getUTCFullYear()} ${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())} UTC`;
 }
 
 function fits(lines: string[], nextLine: string): boolean {
