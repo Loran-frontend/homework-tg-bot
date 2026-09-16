@@ -100,7 +100,7 @@ npm run prisma:deploy
 
 ## Deploy to Render
 
-Для бесплатного Render Web Service бот использует webhook, а не long polling. Render Free Web Service должен принимать HTTP-запросы и слушать порт `PORT`; кроме того, бесплатный сервис может остановиться после периода без входящего трафика. Webhook Telegram соответствует модели Web Service: Telegram отправляет обновления на HTTP endpoint бота. Render автоматически предоставляет публичный `RENDER_EXTERNAL_URL`, поэтому URL webhook не нужно добавлять в `.env`. citeturn0search5turn0search0turn1search0
+Для бесплатного Render Web Service бот использует webhook, а не long polling. Render Free Web Service должен принимать HTTP-запросы и слушать порт `PORT`; кроме того, бесплатный сервис может остановиться после периода без входящего трафика. Webhook Telegram соответствует модели Web Service: Telegram отправляет обновления на HTTP endpoint бота. Render автоматически предоставляет публичный `RENDER_EXTERNAL_URL`, поэтому URL webhook не нужно добавлять в `.env`.
 
 ### 1. Создать PostgreSQL в Neon
 
@@ -144,7 +144,7 @@ WEBHOOK_SECRET=<случайная строка из A-Z/a-z/0-9/_/->
 
 `BOT_TOKEN`, `DATABASE_URL` и `WEBHOOK_SECRET` не должны попадать в GitHub.
 
-`WEBHOOK_SECRET` используется для проверки заголовка `X-Telegram-Bot-Api-Secret-Token`. Telegram поддерживает secret token для webhook, а grammY проверяет его на стороне webhook handler. citeturn3search0turn2search2
+`WEBHOOK_SECRET` используется для проверки заголовка `X-Telegram-Bot-Api-Secret-Token`. Telegram поддерживает secret token для webhook, а grammY проверяет его на стороне webhook handler.
 
 ### 4. Deploy
 
@@ -167,7 +167,7 @@ npm start
 https://<render-service>.onrender.com/telegram/webhook
 ```
 
-`bot.start()` на Render не вызывается, поэтому polling и webhook не запускаются одновременно. Это соответствует модели grammY для webhook. citeturn2search9
+`bot.start()` на Render не вызывается, поэтому polling и webhook не запускаются одновременно.
 
 ### 6. Проверка
 
