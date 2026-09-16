@@ -203,11 +203,14 @@ export class HomeworkStore {
   }
 
   private async ensureList(topicId: number, type: HomeworkType) {
-    return this.prisma.homeworkList.upsert({
-      where: { topicId_type: { topicId, type } },
-      update: {},
-      create: { topicId, type },
-      include: { items: { where: { archived: false }, orderBy: { id: "asc" } } },
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockHomeworkList(tx, topicId, type);
+      return tx.homeworkList.upsert({
+        where: { topicId_type: { topicId, type } },
+        update: {},
+        create: { topicId, type },
+        include: { items: { where: { archived: false }, orderBy: { id: "asc" } } },
+      });
     });
   }
 
@@ -221,8 +224,14 @@ export class HomeworkStore {
     });
   }
 
+  private async lockHomeworkList(tx: Prisma.TransactionClient, topicId: number, type: HomeworkType): Promise<void> {
+    const lockKey = `homework-list:${topicId}:${type}`;
+    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+  }
+
   private async ensureContext(tx: Prisma.TransactionClient, chatId: number, threadId: number, type: HomeworkType, author?: TelegramUserInput) {
     const topic = await this.ensureTopicRecord(tx, chatId, threadId);
+    await this.lockHomeworkList(tx, topic.id, type);
     const list = await tx.homeworkList.upsert({ where: { topicId_type: { topicId: topic.id, type } }, update: {}, create: { topicId: topic.id, type } });
     if (!author) return { list, userId: undefined as number | undefined };
 
