@@ -22,8 +22,7 @@ async function refreshOutputMessage(bot: Bot, store: HomeworkStore, topic: Topic
     if (!saved || saved.destinationChatId === null) return;
 
     await store.withPersistentMessageLock(topic.chatId, topic.threadId, messageType, async (messageId, setMessageId) => {
-      const destinationChatId = saved.destinationChatId as number;
-
+      const destinationChatId = saved.destinationChatId;
       if (messageId) {
         try {
           await bot.api.editMessageText(destinationChatId, messageId, text, { parse_mode: "HTML" });
@@ -34,7 +33,7 @@ async function refreshOutputMessage(bot: Bot, store: HomeworkStore, topic: Topic
       }
 
       const options: { parse_mode: "HTML"; message_thread_id?: number } = { parse_mode: "HTML" };
-      if (destinationChatId === topic.chatId && topic.threadId > 0) options.message_thread_id = topic.threadId;
+      if (saved.destinationThreadId !== null && saved.destinationThreadId > 0) options.message_thread_id = saved.destinationThreadId;
       const message = await bot.api.sendMessage(destinationChatId, text, options);
       await setMessageId(message.message_id);
 
