@@ -38,7 +38,8 @@ export function createBot(token: string, store: HomeworkStore): Bot {
 
   bot.callbackQuery(/^add:type:(IRNITU|MIPT)$/, async (ctx) => runCommand(ctx, async () => {
     const state = getAddState(ctx);
-    state.type = ctx.callbackQuery.data.split(":")[2] as HomeworkType;
+    const data = ctx.callbackQuery.data;
+    state.type = data.split(":")[2] as HomeworkType;
     const subjects = state.type === "IRNITU" ? IRNITU_SUBJECTS : MIPT_SUBJECTS;
     const keyboard = new InlineKeyboard();
     for (const subject of subjects) keyboard.text(subject, `add:subject:${encodeURIComponent(subject)}`).row();
@@ -49,7 +50,8 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.callbackQuery(/^add:subject:(.+)$/, async (ctx) => runCommand(ctx, async () => {
     const state = getAddState(ctx);
     if (!state.type) throw new Error("Сначала выберите тип ДЗ.");
-    const subject = decodeURIComponent(ctx.callbackQuery.data.slice("add:subject:".length));
+    const data = ctx.callbackQuery.data;
+    const subject = decodeURIComponent(data.slice("add:subject:".length));
     if (!isValidSubject(state.type, subject)) throw new Error("Недопустимый предмет.");
     state.subject = subject;
     await ctx.answerCallbackQuery();
@@ -59,7 +61,8 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.callbackQuery(/^add:subgroup:(ALL|GROUP_1|GROUP_2)$/, async (ctx) => runCommand(ctx, async () => {
     const state = getAddState(ctx);
     if (!state.type || !state.subject) throw new Error("Сначала выберите тип и предмет.");
-    state.subgroup = ctx.callbackQuery.data.split(":")[2] as HomeworkSubgroup;
+    const data = ctx.callbackQuery.data;
+    state.subgroup = data.split(":")[2] as HomeworkSubgroup;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Введите срок: ДД.ММ.ГГГГ ЧЧ:ММ");
   }));
@@ -71,7 +74,8 @@ export function createBot(token: string, store: HomeworkStore): Bot {
 
   bot.callbackQuery(/^group:(ALL|GROUP_1|GROUP_2)$/, async (ctx) => runCommand(ctx, async () => {
     const command = getCallbackContext(ctx);
-    const subgroup = ctx.callbackQuery.data.split(":")[1] as HomeworkSubgroup;
+    const data = ctx.callbackQuery.data;
+    const subgroup = data.split(":")[1] as HomeworkSubgroup;
     await store.setUserSubgroup(command.userId, subgroup, userInput(ctx));
     await ctx.answerCallbackQuery("Подгруппа сохранена");
     await ctx.editMessageText(`Подгруппа: ${subgroupLabel(subgroup)}`);
@@ -272,12 +276,12 @@ export async function refreshMessage(api: Context["api"], store: HomeworkStore, 
   await refreshPersistentMessage({ api } as Context, store, topic, "ARCHIVE", text.archive, data.archiveMessageId);
 }
 
-function parseId(value: string): number | null {
+export function parseId(value: string): number | null {
   const id = Number(value.trim());
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-function parseEditCommand(value: string): { id: number; text: string } | null {
+export function parseEditCommand(value: string): { id: number; text: string } | null {
   const match = value.trim().match(/^(\d+)\s+(.+)$/s);
   if (!match) return null;
   const id = parseId(match[1]);
@@ -285,7 +289,7 @@ function parseEditCommand(value: string): { id: number; text: string } | null {
   return id && text ? { id, text } : null;
 }
 
-function parseDeadline(value: string): Date | null {
+export function parseDeadline(value: string): Date | null {
   const match = value.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
   if (!match) return null;
   const [, day, month, year, hours, minutes] = match;
