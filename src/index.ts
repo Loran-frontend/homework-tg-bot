@@ -5,7 +5,6 @@ import { PrismaClient } from "@prisma/client";
 import { webhookCallback } from "grammy";
 import { createBot } from "./bot.js";
 import { refreshMessage } from "./refresh-compat.js";
-import { installOutputTopicRouter } from "./output-topic-router.js";
 import { HomeworkStore } from "./store.js";
 
 const token = process.env.BOT_TOKEN;
@@ -24,23 +23,6 @@ const store = new HomeworkStore(prisma);
 await store.connect();
 
 const bot = createBot(token, store);
-installOutputTopicRouter(bot, store);
-
-// The previous version stored one pair of persistent messages per Topic.
-// Remove those old messages once so the new global output messages cannot duplicate them.
-try {
-  const legacyMessages = await store.getLegacyPersistentMessages();
-  for (const message of legacyMessages) {
-    try {
-      await bot.api.deleteMessage(message.destinationChatId ?? message.topicChatId, message.messageId);
-    } catch (error) {
-      console.warn("Could not delete legacy persistent message:", error);
-    }
-  }
-  if (legacyMessages.length > 0) await store.clearLegacyPersistentMessages();
-} catch (error) {
-  console.error("Failed to clean legacy persistent messages:", error);
-}
 
 const webhookHandler = isRender && webhookSecret ? webhookCallback(bot, "http", { secretToken: webhookSecret }) : null;
 bot.catch((error) => { console.error("Telegram bot error:", error.error); });
@@ -48,7 +30,9 @@ bot.catch((error) => { console.error("Telegram bot error:", error.error); });
 const archiveExpiredHomework = async () => {
   try {
     const topics = await store.archiveExpired();
-    if (topics.length > 0) await refreshMessage(bot, store, topics[0]);
+    for (const topic of topics) {
+      await refreshMessage(bot, store, topic);
+    }
   } catch (error) {
     console.error("Failed to archive expired homework:", error);
   }
