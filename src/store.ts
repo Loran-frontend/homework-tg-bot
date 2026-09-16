@@ -14,15 +14,10 @@ export class HomeworkStore {
 
   async getTopic(chatId: number, threadId: number): Promise<TopicHomework> {
     const topic = await this.prisma.topic.findFirst({
-      where: {
-        group: { chatId: BigInt(chatId) },
-        messageThreadId: threadId,
-      },
+      where: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId },
       include: {
         group: true,
-        homeworkList: {
-          include: { items: { orderBy: { id: "asc" } } },
-        },
+        homeworkList: { include: { items: { orderBy: { id: "asc" } } } },
       },
     });
 
@@ -33,9 +28,8 @@ export class HomeworkStore {
   async add(chatId: number, threadId: number, text: string, author: TelegramUserInput): Promise<HomeworkItem> {
     return this.prisma.$transaction(async (tx) => {
       const { list, userId } = await this.ensureContext(tx, chatId, threadId, author);
-      return tx.homeworkItem.create({
-        data: { listId: list.id, authorId: userId, text },
-      });
+      if (userId === undefined) throw new Error("Homework author is required");
+      return tx.homeworkItem.create({ data: { listId: list.id, authorId: userId, text } });
     });
   }
 
@@ -100,12 +94,7 @@ export class HomeworkStore {
     });
   }
 
-  private async ensureContext(
-    tx: Prisma.TransactionClient,
-    chatId: number,
-    threadId: number,
-    author?: TelegramUserInput,
-  ) {
+  private async ensureContext(tx: Prisma.TransactionClient, chatId: number, threadId: number, author?: TelegramUserInput) {
     const group = await tx.telegramGroup.upsert({
       where: { chatId: BigInt(chatId) },
       update: {},
@@ -147,10 +136,7 @@ export class HomeworkStore {
   private toTopicHomework(topic: {
     messageThreadId: number;
     group: { chatId: bigint };
-    homeworkList: {
-      primaryMessageId: number | null;
-      items: Array<HomeworkItem>;
-    } | null;
+    homeworkList: { primaryMessageId: number | null; items: HomeworkItem[] } | null;
   }): TopicHomework {
     if (!topic.homeworkList) throw new Error("Topic is missing its homework list");
 
