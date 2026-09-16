@@ -1,4 +1,4 @@
-import { Bot } from "grammy";
+import { Bot, type Context } from "grammy";
 import { HomeworkStore } from "./store.js";
 import { formatHomework } from "./format.js";
 
@@ -32,7 +32,6 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     const topic = getTopic(ctx);
     await store.add(topic.chatId, topic.threadId, text);
     await refreshMessage(ctx, store);
-    await ctx.reply("ДЗ добавлено.");
   });
 
   bot.command("edit", async (ctx) => {
@@ -50,7 +49,6 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     }
 
     await refreshMessage(ctx, store);
-    await ctx.reply("ДЗ изменено.");
   });
 
   bot.command("delete", async (ctx) => {
@@ -67,7 +65,6 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     }
 
     await refreshMessage(ctx, store);
-    await ctx.reply("ДЗ удалено.");
   });
 
   bot.command("list", async (ctx) => {
@@ -89,21 +86,23 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     }
 
     await refreshMessage(ctx, store);
-    await ctx.reply(item.completed ? "ДЗ отмечено выполненным." : "Отметка о выполнении снята.");
   });
 
   return bot;
 }
 
-function getTopic(ctx: { chat?: { id: number }; message?: { message_thread_id?: number } }) {
-  if (!ctx.chat) throw new Error("Команда должна быть отправлена из чата.");
+function getTopic(ctx: Context) {
+  if (!ctx.chat) {
+    throw new Error("Команда должна быть отправлена из чата.");
+  }
+
   return {
     chatId: ctx.chat.id,
     threadId: ctx.message?.message_thread_id ?? 0,
   };
 }
 
-async function refreshMessage(ctx: any, store: HomeworkStore): Promise<void> {
+async function refreshMessage(ctx: Context, store: HomeworkStore): Promise<void> {
   const topic = getTopic(ctx);
   const data = store.getTopic(topic.chatId, topic.threadId);
   const text = formatHomework(data);
@@ -114,11 +113,8 @@ async function refreshMessage(ctx: any, store: HomeworkStore): Promise<void> {
       return;
     } catch (error) {
       const description = error instanceof Error ? error.message : String(error);
-      if (!description.includes("message is not modified")) {
-        data.messageId = undefined;
-      } else {
-        return;
-      }
+      if (description.includes("message is not modified")) return;
+      data.messageId = undefined;
     }
   }
 
