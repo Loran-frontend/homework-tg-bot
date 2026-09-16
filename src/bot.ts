@@ -5,6 +5,7 @@ import { parseAddCommand } from "./add-flow.js";
 import type { HomeworkSubgroup, HomeworkType, PersistentMessageType } from "./types.js";
 
 type Topic = { chatId: number; threadId: number };
+type OutputDestination = Topic;
 type CommandContext = { topic: Topic; userId: number };
 type AddState = { topic: Topic; userId: number; type?: HomeworkType; subject?: string; subgroup?: HomeworkSubgroup; deadline?: Date };
 
@@ -17,8 +18,8 @@ const COMMAND_HELP = [
   "/list — обновить список ДЗ",
   "/done <номер> — отметить ДЗ выполненным",
   "/group — выбрать подгруппу",
-  "/setactive <chat_id|here> — куда отправлять актуальные ДЗ",
-  "/setarchive <chat_id|here> — куда отправлять архив ДЗ",
+  "/setactive <chat_id> <thread_id> | here — куда отправлять актуальные ДЗ",
+  "/setarchive <chat_id> <thread_id> | here — куда отправлять архив ДЗ",
   "/settings — показать настройки вывода для текущего Topic",
 ].join("\n");
 
@@ -102,18 +103,18 @@ export function createBot(token: string, store: HomeworkStore): Bot {
 
   bot.command("setactive", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
-    const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
-    await configureOutputDestination(ctx, store, command.topic, "ACTIVE", destinationChatId);
+    const destination = parseOutputDestination(ctx.match, command.topic);
+    await configureOutputDestination(ctx, store, command.topic, "ACTIVE", destination);
     await refreshOutputMessage(ctx, store, command.topic, "ACTIVE");
-    await replyInTopic(ctx, `Актуальные ДЗ теперь находятся в ${formatDestination(command.topic, destinationChatId)}.`, command.topic);
+    await replyInTopic(ctx, `Актуальные ДЗ теперь находятся в ${formatDestination(destination)}.`, command.topic);
   }));
 
   bot.command("setarchive", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
-    const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
-    await configureOutputDestination(ctx, store, command.topic, "ARCHIVE", destinationChatId);
+    const destination = parseOutputDestination(ctx.match, command.topic);
+    await configureOutputDestination(ctx, store, command.topic, "ARCHIVE", destination);
     await refreshOutputMessage(ctx, store, command.topic, "ARCHIVE");
-    await replyInTopic(ctx, `Архив ДЗ теперь находится в ${formatDestination(command.topic, destinationChatId)}.`, command.topic);
+    await replyInTopic(ctx, `Архив ДЗ теперь находится в ${formatDestination(destination)}.`, command.topic);
   }));
 
   bot.command("settings", async (ctx) => runCommand(ctx, async () => {
@@ -122,8 +123,11 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       store.getPersistentMessageInfo(command.topic.chatId, command.topic.threadId, "ACTIVE"),
       store.getPersistentMessageInfo(command.topic.chatId, command.topic.threadId, "ARCHIVE"),
     ]);
-    const formatSetting = (value: { destinationChatId: number | null } | null) => value?.destinationChatId === null || !value ? "не настроено" : String(value.destinationChatId);
-    await replyInTopic(ctx, `Настройки вывода текущего Topic:\n\nАктуальные ДЗ: ${formatSetting(active)}\nАрхив ДЗ: ${formatSetting(archive)}\n\nИзменить:\n/setactive <chat_id|here>\n/setarchive <chat_id|here>`, command.topic);
+    const formatSetting = (value: { destinationChatId: number | null; destinationThreadId: number | null } | null) => {
+      if (!value || value.destinationChatId === null) return "не настроено";
+      return formatDestination({ chatId: value.destinationChatId, threadId: value.destinationThreadId ?? 0 });
+    };
+    await replyInTopic(ctx, `Настройки вывода текущего Topic:\n\nАктуальные ДЗ: ${formatSetting(active)}\nАрхив ДЗ: ${formatSetting(archive)}\n\nИзменить:\n/setactive <chat_id> <thread_id>\n/setactive here\n/setarchive <chat_id> <thread_id>\n/setarchive here`, command.topic);
   }));
 
   bot.on("message:text", async (ctx, next) => {
@@ -304,20 +308,42 @@ function subgroupKeyboard(prefix: string): InlineKeyboard {
   return new InlineKeyboard().text("Все", `${prefix}ALL`).row().text("1 подгруппа", `${prefix}GROUP_1`).row().text("2 подгруппа", `${prefix}GROUP_2`);
 }
 
-function parseDestinationChatId(value: string, currentChatId: number): number {
+export function parseOutputDestination(value: string, currentTopic: Topic): OutputDestination {
   const normalized = value.trim();
-  if (!normalized || normalized === "here") return currentChatId;
-  const id = Number(normalized);
+  if (!normalized || normalized === "here") return currentTopic;
+
+  const compact = normalized.replace(/^here\s*[:/]\s*/, "here:");
+  if (compact.startsWith("here:")) {
+    const threadId = parseThreadId(compact.slice("here:".length));
+    return { chatId: currentTopic.chatId, threadId };
+  }
+
+  const colon = normalized.match(/^(-?\d+):(\d+)$/);
+  if (colon) return { chatId: parseChatId(colon[1]), threadId: parseThreadId(colon[2]) };
+
+  const parts = normalized.split(/\s+/);
+  if (parts.length !== 2) throw new Error("Использование: /setactive <chat_id> <thread_id> или /setactive here");
+  return { chatId: parseChatId(parts[0]), threadId: parseThreadId(parts[1]) };
+}
+
+function parseChatId(value: string): number {
+  const id = Number(value);
   if (!Number.isSafeInteger(id) || id === 0) throw new Error("Некорректный chat_id.");
   return id;
 }
 
-async function configureOutputDestination(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
+function parseThreadId(value: string): number {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 0) throw new Error("Некорректный threadId.");
+  return id;
+}
+
+async function configureOutputDestination(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, destination: OutputDestination): Promise<void> {
   const previous = await store.getPersistentMessageInfo(topic.chatId, topic.threadId, messageType);
   if (previous?.messageId && previous.destinationChatId !== null) {
     try { await ctx.api.deleteMessage(previous.destinationChatId, previous.messageId); } catch { /* message may already be deleted */ }
   }
-  await store.setPersistentMessageDestination(topic.chatId, topic.threadId, messageType, destinationChatId);
+  await store.setPersistentMessageDestination(topic.chatId, topic.threadId, messageType, destination.chatId, destination.threadId);
 }
 
 async function refreshOutputMessages(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
@@ -333,9 +359,9 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
     const text = formatPersistentMessages(data)[messageType === "ACTIVE" ? "active" : "archive"];
     const saved = await store.getPersistentMessageInfo(topic.chatId, topic.threadId, messageType);
     if (!saved || saved.destinationChatId === null) return;
+    const destinationChatId = saved.destinationChatId;
 
     await store.withPersistentMessageLock(topic.chatId, topic.threadId, messageType, async (messageId, setMessageId) => {
-      const destinationChatId = saved.destinationChatId as number;
       if (messageId) {
         try {
           await ctx.api.editMessageText(destinationChatId, messageId, text, { parse_mode: "HTML" });
@@ -345,7 +371,7 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
         }
       }
       const options: { parse_mode: "HTML"; message_thread_id?: number } = { parse_mode: "HTML" };
-      if (destinationChatId === topic.chatId && topic.threadId > 0) options.message_thread_id = topic.threadId;
+      if (saved.destinationThreadId !== null && saved.destinationThreadId > 0) options.message_thread_id = saved.destinationThreadId;
       const message = await ctx.api.sendMessage(destinationChatId, text, options);
       await setMessageId(message.message_id);
       try { await ctx.api.pinChatMessage(destinationChatId, message.message_id, { disable_notification: true }); } catch (error) { console.warn(`Could not pin ${messageType} output message:`, error); }
@@ -355,8 +381,7 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
   try { await next; } finally { if (refreshLocks.get(lockKey) === next) refreshLocks.delete(lockKey); }
 }
 
-function formatDestination(topic: Topic, destinationChatId: number): string {
-  if (destinationChatId === topic.chatId && topic.threadId > 0) return "этом Topic";
-  if (destinationChatId === topic.chatId) return "этом чате";
-  return `чате ${destinationChatId}`;
+function formatDestination(destination: OutputDestination): string {
+  if (destination.threadId > 0) return `чате ${destination.chatId}, Topic ${destination.threadId}`;
+  return `чате ${destination.chatId}`;
 }
