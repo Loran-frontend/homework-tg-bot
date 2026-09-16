@@ -100,13 +100,11 @@ export class HomeworkStore {
   }
 
   async withOutputMessageLock<T>(messageType: PersistentMessageType, callback: (messageId: number | null, destinationChatId: number | null, setMessage: (id: number) => Promise<void>) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      const lockKey = `global-output:${messageType}`;
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
-      const record = await tx.outputMessage.findUnique({ where: { messageType }, select: { messageId: true, destinationChatId: true } });
-      const setMessage = async (id: number): Promise<void> => { await tx.outputMessage.upsert({ where: { messageType }, update: { messageId: id }, create: { messageType, messageId: id } }); };
-      return callback(record?.messageId && record.messageId > 0 ? record.messageId : null, record?.destinationChatId == null ? null : Number(record.destinationChatId), setMessage);
-    });
+    const record = await this.prisma.outputMessage.findUnique({ where: { messageType }, select: { messageId: true, destinationChatId: true } });
+    const setMessage = async (id: number): Promise<void> => {
+      await this.prisma.outputMessage.upsert({ where: { messageType }, update: { messageId: id }, create: { messageType, messageId: id } });
+    };
+    return callback(record?.messageId && record.messageId > 0 ? record.messageId : null, record?.destinationChatId == null ? null : Number(record.destinationChatId), setMessage);
   }
 
   async getLegacyPersistentMessages(): Promise<LegacyPersistentMessage[]> {
