@@ -208,7 +208,8 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     const command = getCommandContext(ctx);
     const parsed = parseEditCommand(ctx.match);
     if (!parsed) throw new Error("Использование: /edit <номер> <новый текст>");
-    await store.editHomework(command.topic, parsed.id, parsed.text, command.userId, userInput(ctx));
+    const updated = await store.editHomework(command.topic, parsed.id, parsed.text, command.userId, userInput(ctx));
+    if (!updated) throw new Error(`ДЗ #${parsed.id} не найдено.`);
     await refreshOutputMessages(ctx, store, command.topic);
     await replyInTopic(ctx, "✅ ДЗ изменено.", command.topic);
   }));
@@ -217,7 +218,8 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     const command = getCommandContext(ctx);
     const id = parseId(ctx.match);
     if (id === null) throw new Error("Использование: /delete <номер>");
-    await store.deleteHomework(command.topic, id, command.userId, userInput(ctx));
+    const result = await store.deleteHomework(command.topic, id, command.userId, userInput(ctx));
+    if (!result.removed) throw new Error(`ДЗ #${id} не найдено.`);
     await refreshOutputMessages(ctx, store, command.topic);
     await replyInTopic(ctx, "🗑 ДЗ удалено.", command.topic);
   }));
