@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { parseAddCommand } from "./add-flow.js";
 import { parseDeadline, parseEditCommand, parseId } from "./bot.js";
 import { formatHomework } from "./format.js";
 import type { TopicHomework } from "./types.js";
@@ -26,6 +27,22 @@ test("command argument edge cases", () => {
   assert.equal(parseEditCommand("1"), null);
   assert.equal(parseEditCommand("-1 текст"), null);
   assert.equal(parseEditCommand("abc текст"), null);
+});
+
+test("direct /add command parser supports legacy text and optional deadline", () => {
+  const noDeadline = parseAddCommand("Решить задачи");
+  assert.deepEqual(noDeadline, {
+    type: "IRNITU",
+    subject: "Вычислительная математика",
+    subgroup: "ALL",
+    description: "Решить задачи",
+    deadline: null,
+  });
+
+  const parsed = parseAddCommand("Решить задачи | 31.12.2026 23:59");
+  assert.equal(parsed?.description, "Решить задачи");
+  assert.equal(parsed?.deadline?.toISOString(), "2026-12-31T23:59:00.000Z");
+  assert.equal(parseAddCommand("Решить задачи | 31.02.2026 12:00"), null);
 });
 
 test("deadline parser accepts valid dates and rejects invalid dates", () => {
