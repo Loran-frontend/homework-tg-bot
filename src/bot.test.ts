@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import test from "node:test";
 
-describe("placeholder", () => {
-  it("passes", () => expect(true).toBe(true));
+test("test runner is available", () => {
+  assert.equal(true, true);
 });
