@@ -50,18 +50,21 @@ export class HomeworkStore {
     return result.count === 1;
   }
 
-  async toggleDone(chatId: number, threadId: number, id: number): Promise<HomeworkItem | null> {
+  async markDone(chatId: number, threadId: number, id: number): Promise<{ item: HomeworkItem; alreadyDone: boolean } | null> {
     const topic = await this.getTopicRecord(chatId, threadId);
     if (!topic) return null;
 
-    const rows = await this.prisma.$queryRaw<HomeworkItem[]>(Prisma.sql`
-      UPDATE "HomeworkItem"
-      SET "completed" = NOT "completed", "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${id} AND "listId" = ${topic.homeworkList.id}
-      RETURNING "id", "text", "completed", "authorId", "createdAt", "updatedAt"
-    `);
+    const item = await this.prisma.homeworkItem.findFirst({
+      where: { id, listId: topic.homeworkList.id },
+    });
+    if (!item) return null;
+    if (item.completed) return { item, alreadyDone: true };
 
-    return rows[0] ?? null;
+    const updated = await this.prisma.homeworkItem.update({
+      where: { id: item.id },
+      data: { completed: true },
+    });
+    return { item: updated, alreadyDone: false };
   }
 
   async setMessageId(chatId: number, threadId: number, messageId: number | null): Promise<void> {
