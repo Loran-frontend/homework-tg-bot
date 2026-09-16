@@ -20,12 +20,16 @@ HomeworkStore.prototype.addHomework = function (_topic, type, subject, descripti
   return this.add(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, { type, subject, description, subgroup, deadline }, author);
 };
 
-HomeworkStore.prototype.editHomework = function (_topic, id, description) {
-  return this.edit(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, id, description);
+HomeworkStore.prototype.editHomework = function (_topic, id, description, userId) {
+  // The command Topic is only the interaction context. HomeworkItem.id is
+  // globally unique, so it is the only lookup key used for mutations.
+  return this.edit(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, id, description, userId);
 };
 
-HomeworkStore.prototype.deleteHomework = function (_topic, id) {
-  return this.remove(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, id);
+HomeworkStore.prototype.deleteHomework = function (_topic, id, userId) {
+  // Do not reject archived items here: an expired homework item is still a
+  // real HomeworkItem and must be deletable from any Topic.
+  return this.remove(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, id, userId);
 };
 
 HomeworkStore.prototype.completeHomework = function (_topic, id) {
@@ -62,8 +66,8 @@ HomeworkStore.prototype.getTopicMessages = async function (chatId, threadId): Pr
 };
 
 // Output messages have one global destination per type. This deliberately
-// ignores the command Topic so /add, /list and deadline archiving all update
-// the same configured ACTIVE/ARCHIVE messages.
+// ignores the command Topic so /add, /edit, /delete, /list and deadline
+// archiving all update the same configured ACTIVE/ARCHIVE messages.
 HomeworkStore.prototype.getPersistentMessageInfo = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType): Promise<PersistentMessageInfo | null> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const system = await ensureSystemPersistentMessage(prisma, messageType);
