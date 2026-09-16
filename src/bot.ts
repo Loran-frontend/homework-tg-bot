@@ -15,101 +15,124 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   const bot = new Bot(token);
 
   bot.command("start", async (ctx) => {
-    await ctx.reply(`Бот для домашних заданий готов.\n\n${COMMAND_HELP}`);
+    await replyInTopic(ctx, `Бот для домашних заданий готов.\n\n${COMMAND_HELP}`);
   });
 
   bot.command("help", async (ctx) => {
-    await ctx.reply(COMMAND_HELP);
+    await replyInTopic(ctx, COMMAND_HELP);
   });
 
   bot.command("add", async (ctx) => {
+    const topic = getTopic(ctx);
     const text = ctx.match.trim();
     if (!text) {
-      await ctx.reply("Использование: /add <текст ДЗ>");
+      await replyInTopic(ctx, "Использование: /add <текст ДЗ>", topic);
       return;
     }
 
-    const topic = getTopic(ctx);
     await store.add(topic.chatId, topic.threadId, text);
-    await refreshMessage(ctx, store);
+    await refreshMessage(ctx, store, topic);
   });
 
   bot.command("edit", async (ctx) => {
+    const topic = getTopic(ctx);
     const match = ctx.match.trim().match(/^(\d+)\s+(.+)$/s);
     if (!match) {
-      await ctx.reply("Использование: /edit <номер> <новый текст>");
+      await replyInTopic(ctx, "Использование: /edit <номер> <новый текст>", topic);
       return;
     }
 
-    const topic = getTopic(ctx);
     const item = await store.edit(topic.chatId, topic.threadId, Number(match[1]), match[2].trim());
     if (!item) {
-      await ctx.reply("ДЗ с таким номером не найдено.");
+      await replyInTopic(ctx, "ДЗ с таким номером не найдено.", topic);
       return;
     }
 
-    await refreshMessage(ctx, store);
+    await refreshMessage(ctx, store, topic);
   });
 
   bot.command("delete", async (ctx) => {
+    const topic = getTopic(ctx);
     const id = parseId(ctx.match);
     if (id === null) {
-      await ctx.reply("Использование: /delete <номер>");
+      await replyInTopic(ctx, "Использование: /delete <номер>", topic);
       return;
     }
 
-    const topic = getTopic(ctx);
     if (!(await store.remove(topic.chatId, topic.threadId, id))) {
-      await ctx.reply("ДЗ с таким номером не найдено.");
+      await replyInTopic(ctx, "ДЗ с таким номером не найдено.", topic);
       return;
     }
 
-    await refreshMessage(ctx, store);
+    await refreshMessage(ctx, store, topic);
   });
 
   bot.command("list", async (ctx) => {
-    await refreshMessage(ctx, store);
+    const topic = getTopic(ctx);
+    await refreshMessage(ctx, store, topic);
   });
 
   bot.command("done", async (ctx) => {
+    const topic = getTopic(ctx);
     const id = parseId(ctx.match);
     if (id === null) {
-      await ctx.reply("Использование: /done <номер>");
+      await replyInTopic(ctx, "Использование: /done <номер>", topic);
       return;
     }
 
-    const topic = getTopic(ctx);
     const item = await store.toggleDone(topic.chatId, topic.threadId, id);
     if (!item) {
-      await ctx.reply("ДЗ с таким номером не найдено.");
+      await replyInTopic(ctx, "ДЗ с таким номером не найдено.", topic);
       return;
     }
 
-    await refreshMessage(ctx, store);
+    await refreshMessage(ctx, store, topic);
   });
 
   return bot;
 }
 
-function getTopic(ctx: Context) {
-  if (!ctx.chat) {
-    throw new Error("Команда должна быть отправлена из чата.");
+type Topic = {
+  chatId: number;
+  threadId: number;
+};
+
+function getTopic(ctx: Context): Topic {
+  const message = ctx.msg;
+  if (!message?.chat) {
+    throw new Error("Команда должна быть отправлена из сообщения чата.");
+  }
+
+  if (message.chat.type !== "supergroup") {
+    throw new Error("Бот работает только в Telegram supergroup с Topics.");
+  }
+
+  if (!message.is_topic_message || message.message_thread_id === undefined) {
+    throw new Error("Команда должна быть отправлена внутри Telegram Topic.");
   }
 
   return {
-    chatId: ctx.chat.id,
-    threadId: ctx.message?.message_thread_id ?? 0,
+    chatId: message.chat.id,
+    threadId: message.message_thread_id,
   };
 }
 
-async function refreshMessage(ctx: Context, store: HomeworkStore): Promise<void> {
-  const topic = getTopic(ctx);
+async function replyInTopic(ctx: Context, text: string, topic?: Topic): Promise<void> {
+  const target = topic ?? getTopic(ctx);
+  await ctx.api.sendMessage(target.chatId, text, {
+    message_thread_id: target.threadId,
+  });
+}
+
+async function refreshMessage(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
   const data = store.getTopic(topic.chatId, topic.threadId);
   const text = formatHomework(data);
 
   if (data.messageId) {
     try {
-      await ctx.api.editMessageText(topic.chatId, data.messageId, text, { parse_mode: "HTML" });
+      await ctx.api.editMessageText(topic.chatId, data.messageId, text, {
+        parse_mode: "HTML",
+      });
       return;
     } catch (error) {
       const description = error instanceof Error ? error.message : String(error);
@@ -118,7 +141,10 @@ async function refreshMessage(ctx: Context, store: HomeworkStore): Promise<void>
     }
   }
 
-  const message = await ctx.reply(text, { parse_mode: "HTML" });
+  const message = await ctx.api.sendMessage(topic.chatId, text, {
+    message_thread_id: topic.threadId,
+    parse_mode: "HTML",
+  });
   await store.setMessageId(topic.chatId, topic.threadId, message.message_id);
 }
 
