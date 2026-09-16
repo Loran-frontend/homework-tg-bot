@@ -110,7 +110,7 @@ export class HomeworkStore {
   }
 
   async getLegacyPersistentMessages(): Promise<LegacyPersistentMessage[]> {
-    const messages = await this.prisma.persistentMessage.findMany({ where: { messageId: { gt: 0 } }, select: { messageId: true, messageType: true, destinationChatId: true, topic: { select: { messageThreadId: true, group: { select: { chatId: true } } } } });
+    const messages = await this.prisma.persistentMessage.findMany({ where: { messageId: { gt: 0 } }, select: { messageId: true, messageType: true, destinationChatId: true, topic: { select: { messageThreadId: true, group: { select: { chatId: true } } } } } });
     return messages.map((message) => ({ messageId: message.messageId, messageType: message.messageType, destinationChatId: message.destinationChatId == null ? Number(message.topic.group.chatId) : Number(message.destinationChatId), topicChatId: Number(message.topic.group.chatId), threadId: message.topic.messageThreadId }));
   }
 
