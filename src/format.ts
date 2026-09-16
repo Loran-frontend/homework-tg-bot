@@ -36,11 +36,27 @@ export function formatPersistentMessages(data: TopicMessages): { active: string;
 }
 
 function formatCombined(title: string, lists: TopicHomework[], archive: boolean): string {
-  const sections = lists.map((list) => {
-    const sectionTitle = list.type === "IRNITU" ? "📚 <b>ДЗ ИРНИТУ</b>" : "📘 <b>ДЗ МФТИ</b>";
-    return formatSection(sectionTitle, list.items, archive);
-  });
-  return capMessage([title, "", ...sections.join("\n\n────────────────\n\n").split("\n").filter(() => true)].join("\n"));
+  const grouped: Record<HomeworkType, HomeworkItem[]> = {
+    IRNITU: [],
+    MIPT: [],
+  };
+
+  for (const list of lists) {
+    grouped[list.type].push(...list.items);
+  }
+
+  const sections: string[] = [];
+  if (grouped.IRNITU.length > 0) {
+    sections.push(formatSection("📚 <b>ДЗ ИРНИТУ</b>", grouped.IRNITU, archive));
+  }
+  if (grouped.MIPT.length > 0) {
+    sections.push(formatSection("📘 <b>ДЗ МФТИ</b>", grouped.MIPT, archive));
+  }
+  if (sections.length === 0) {
+    sections.push("Нет заданий.");
+  }
+
+  return capMessage([title, "", sections.join("\n\n────────────────\n\n")].join("\n"));
 }
 
 function formatSection(title: string, items: HomeworkItem[], archive: boolean): string {
