@@ -126,7 +126,7 @@ export class HomeworkStore {
     return this.prisma.$transaction(async (tx) => {
       const topic = await this.ensureTopicRecord(tx, chatId, threadId);
       const lockKey = `homework:${topic.id}:${messageType}`;
-      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
 
       const record = await tx.persistentMessage.findUnique({
         where: { topicId_messageType: { topicId: topic.id, messageType } },
@@ -226,7 +226,7 @@ export class HomeworkStore {
 
   private async lockHomeworkList(tx: Prisma.TransactionClient, topicId: number, type: HomeworkType): Promise<void> {
     const lockKey = `homework-list:${topicId}:${type}`;
-    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
   }
 
   private async ensureContext(tx: Prisma.TransactionClient, chatId: number, threadId: number, type: HomeworkType, author?: TelegramUserInput) {
