@@ -48,9 +48,11 @@ function formatCombined(title: string, lists: TopicHomework[], archive: boolean)
   return capMessage(lines.join("\n"));
 }
 
-function formatSection(title: string, items: HomeworkItem[], archive: boolean): string {
-  const lines = [title, ""];
-  if (items.length === 0) return lines.concat("Пока заданий нет.").join("\n");
+  for (let index = 0; index < topic.items.length; index += 1) {
+    const item = topic.items[index];
+    const mark = item.completed ? "✅" : "⬜";
+    const deadline = item.deadline ? ` — до ${formatDeadline(item.deadline)}` : "";
+    const fullLine = `${item.id}. ${mark} ${escapeHtml(item.text)}${deadline}`;
 
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
@@ -85,9 +87,13 @@ export function formatDeadline(deadline: Date): string {
   return `${pad(deadline.getDate())}.${pad(deadline.getMonth() + 1)}.${deadline.getFullYear()} ${pad(deadline.getHours())}:${pad(deadline.getMinutes())}`;
 }
 
-function capMessage(text: string): string {
-  if (text.length <= TELEGRAM_MESSAGE_LIMIT) return text;
-  return `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 40)}\n⚠️ Список обрезан Telegram.`;
+function formatDeadline(value: Date): string {
+  const pad = (number: number) => String(number).padStart(2, "0");
+  return `${pad(value.getUTCDate())}.${pad(value.getUTCMonth() + 1)}.${value.getUTCFullYear()} ${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())} UTC`;
+}
+
+function fits(lines: string[], nextLine: string): boolean {
+  return [...lines, nextLine].join("\n").length <= TELEGRAM_MESSAGE_LIMIT;
 }
 
 function pluralizeItems(count: number): string {

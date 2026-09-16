@@ -95,19 +95,18 @@ model HomeworkItem {
   id          Int              @id @default(autoincrement())
   listId      Int
   authorId    Int
-  subject     String           @default("Вычислительная математика")
-  description String           @default("")
-  subgroup    HomeworkSubgroup @default(ALL)
+  text        String
   deadline    DateTime?
-  archived    Boolean          @default(false)
-  completed   Boolean          @default(false)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  archived    Boolean       @default(false)
+  completed   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   list        HomeworkList  @relation(fields: [listId], references: [id], onDelete: Cascade)
   author      TelegramUser  @relation("HomeworkAuthor", fields: [authorId], references: [id], onDelete: Restrict)
 
   @@index([listId, createdAt])
+  @@index([listId, archived, deadline])
   @@index([authorId])
   @@index([deadline, archived])
 }

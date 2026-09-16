@@ -11,10 +11,7 @@ export interface TelegramUserInput {
 
 export interface HomeworkItem {
   id: number;
-  type: HomeworkType;
-  subject: string;
-  description: string;
-  subgroup: HomeworkSubgroup;
+  text: string;
   deadline: Date | null;
   archived: boolean;
   completed: boolean;
