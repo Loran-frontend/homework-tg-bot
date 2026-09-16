@@ -1,5 +1,6 @@
 export type HomeworkType = "IRNITU" | "MIPT";
 export type HomeworkSubgroup = "ALL" | "GROUP_1" | "GROUP_2";
+export type PersistentMessageType = "ACTIVE" | "ARCHIVE";
 
 export interface TelegramUserInput {
   telegramId: number;
@@ -26,6 +27,14 @@ export interface TopicHomework {
   chatId: number;
   threadId: number;
   type: HomeworkType;
-  messageId?: number;
   items: HomeworkItem[];
+}
+
+export interface TopicMessages {
+  chatId: number;
+  threadId: number;
+  activeMessageId?: number;
+  archiveMessageId?: number;
+  active: TopicHomework[];
+  archive: TopicHomework[];
 }

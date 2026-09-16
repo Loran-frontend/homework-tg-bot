@@ -1,4 +1,4 @@
-import type { HomeworkItem, HomeworkSubgroup, HomeworkType, TopicHomework } from "./types.js";
+import type { HomeworkItem, HomeworkSubgroup, HomeworkType, TopicHomework, TopicMessages } from "./types.js";
 
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
 
@@ -25,38 +25,53 @@ export function isValidSubject(type: HomeworkType, subject: string): boolean {
 }
 
 export function formatHomework(topic: TopicHomework): string {
-  const title = topic.type === "IRNITU" ? "📚 <b>ДЗ ИРНИТУ</b>" : "📘 <b>ДЗ МФТИ</b>";
+  return formatSection(topic.type === "IRNITU" ? "📚 <b>ДЗ ИРНИТУ</b>" : "📘 <b>ДЗ МФТИ</b>", topic.items, false);
+}
+
+export function formatPersistentMessages(data: TopicMessages): { active: string; archive: string } {
+  return {
+    active: formatCombined("📚 <b>ДЗ</b>", data.active, false),
+    archive: formatCombined("🗄 <b>Архив ДЗ</b>", data.archive, true),
+  };
+}
+
+function formatCombined(title: string, lists: TopicHomework[], archive: boolean): string {
   const lines = [title, ""];
+  let hasItems = false;
+  for (const list of lists) {
+    const sectionTitle = list.type === "IRNITU" ? "📚 <b>ДЗ ИРНИТУ</b>" : "📘 <b>ДЗ МФТИ</b>";
+    const section = formatSection(sectionTitle, list.items, archive);
+    if (hasItems) lines.push("", "────────────────");
+    lines.push(section);
+    hasItems = true;
+  }
+  return capMessage(lines.join("\n"));
+}
 
-  if (topic.items.length === 0) return lines.concat("Пока домашних заданий нет.").join("\n");
+function formatSection(title: string, items: HomeworkItem[], archive: boolean): string {
+  const lines = [title, ""];
+  if (items.length === 0) return lines.concat("Пока заданий нет.").join("\n");
 
-  let hiddenItems = 0;
-  for (let index = 0; index < topic.items.length; index += 1) {
-    const item = topic.items[index];
-    const block = formatItem(item, index + 1);
-    const separator = lines.length > 2 ? "\n" : "";
-    if (fits(lines, `${separator}${block}`)) {
-      if (separator) lines.push("");
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const block = formatItem(item, index + 1, archive);
+    const candidate = [...lines, ...(lines.length > 2 ? ["", block] : [block])].join("\n");
+    if (candidate.length <= TELEGRAM_MESSAGE_LIMIT) {
+      if (lines.length > 2) lines.push("");
       lines.push(block);
       continue;
     }
-
-    const remaining = topic.items.length - index;
-    const warning = `⚠️ Ещё ${remaining} ${pluralizeItems(remaining)} скрыто из-за ограничения Telegram на длину сообщения.`;
-    if (fits(lines, warning)) lines.push(warning);
-    hiddenItems = remaining;
+    lines.push(`⚠️ Ещё ${items.length - index} ${pluralizeItems(items.length - index)} скрыто из-за ограничения Telegram.`);
     break;
   }
-
-  if (hiddenItems > 0 && lines.length === 2) lines.push(`⚠️ Список слишком большой: ${hiddenItems} ${pluralizeItems(hiddenItems)} скрыто.`);
   return lines.join("\n");
 }
 
-function formatItem(item: HomeworkItem, number: number): string {
+function formatItem(item: HomeworkItem, number: number, archive: boolean): string {
   const mark = item.completed ? "✅" : "⬜";
-  const subgroup = subgroupLabel(item.subgroup);
   const deadline = item.deadline ? `\n⏰ до ${formatDeadline(item.deadline)}` : "";
-  return `${number}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${escapeHtml(item.description)}\n👥 ${subgroup}${deadline}`;
+  const archived = archive ? "\n✅ Архивировано" : "";
+  return `${number}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${escapeHtml(item.description)}\n👥 ${subgroupLabel(item.subgroup)}${deadline}${archived}`;
 }
 
 export function subgroupLabel(subgroup: HomeworkSubgroup): string {
@@ -70,8 +85,9 @@ export function formatDeadline(deadline: Date): string {
   return `${pad(deadline.getDate())}.${pad(deadline.getMonth() + 1)}.${deadline.getFullYear()} ${pad(deadline.getHours())}:${pad(deadline.getMinutes())}`;
 }
 
-function fits(lines: string[], next: string): boolean {
-  return [...lines, next].join("\n").length <= TELEGRAM_MESSAGE_LIMIT;
+function capMessage(text: string): string {
+  if (text.length <= TELEGRAM_MESSAGE_LIMIT) return text;
+  return `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 40)}\n⚠️ Список обрезан Telegram.`;
 }
 
 function pluralizeItems(count: number): string {

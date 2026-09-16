@@ -18,6 +18,11 @@ enum HomeworkSubgroup {
   GROUP_2
 }
 
+enum PersistentMessageType {
+  ACTIVE
+  ARCHIVE
+}
+
 model TelegramGroup {
   id        Int      @id @default(autoincrement())
   chatId    BigInt   @unique
@@ -29,15 +34,16 @@ model TelegramGroup {
 }
 
 model Topic {
-  id               Int          @id @default(autoincrement())
+  id               Int                 @id @default(autoincrement())
   groupId          Int
   messageThreadId  Int
   name             String?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
-  group            TelegramGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  homeworkLists    HomeworkList[]
+  group             TelegramGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  homeworkLists     HomeworkList[]
+  persistentMessages PersistentMessage[]
 
   @@unique([groupId, messageThreadId])
   @@index([groupId])
@@ -68,6 +74,20 @@ model HomeworkList {
   items            HomeworkItem[]
 
   @@unique([topicId, type])
+  @@index([topicId])
+}
+
+model PersistentMessage {
+  id          Int                   @id @default(autoincrement())
+  topicId     Int
+  messageType PersistentMessageType
+  messageId   Int
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, messageType])
   @@index([topicId])
 }
 
