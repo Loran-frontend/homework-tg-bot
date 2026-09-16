@@ -56,8 +56,8 @@ model TelegramUser {
   firstName   String?
   lastName    String?
   subgroup    HomeworkSubgroup?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
   authoredHomework HomeworkItem[] @relation("HomeworkAuthor")
 }
@@ -67,8 +67,8 @@ model HomeworkList {
   topicId          Int
   type             HomeworkType  @default(IRNITU)
   primaryMessageId Int?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   topic            Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
   items            HomeworkItem[]
@@ -78,18 +78,27 @@ model HomeworkList {
 }
 
 model PersistentMessage {
-  id                 Int                   @id @default(autoincrement())
-  topicId            Int
-  messageType        PersistentMessageType
-  messageId          Int
-  destinationChatId  BigInt?
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
+  id                Int                   @id @default(autoincrement())
+  topicId           Int
+  messageType       PersistentMessageType
+  messageId         Int
+  destinationChatId BigInt?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 
   topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
   @@unique([topicId, messageType])
   @@index([topicId])
+}
+
+model OutputMessage {
+  id                Int                   @id @default(autoincrement())
+  messageType       PersistentMessageType @unique
+  messageId         Int                   @default(0)
+  destinationChatId BigInt?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 }
 
 model HomeworkItem {
@@ -102,8 +111,8 @@ model HomeworkItem {
   deadline    DateTime?
   archived    Boolean          @default(false)
   completed   Boolean          @default(false)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
   list        HomeworkList  @relation(fields: [listId], references: [id], onDelete: Cascade)
   author      TelegramUser  @relation("HomeworkAuthor", fields: [authorId], references: [id], onDelete: Restrict)
