@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import { PrismaClient } from "@prisma/client";
-import { Bot, webhookCallback } from "grammy";
+import { webhookCallback } from "grammy";
 import { createBot } from "./bot.js";
 import { HomeworkStore } from "./store.js";
 
