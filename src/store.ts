@@ -54,16 +54,18 @@ export class HomeworkStore {
     });
   }
 
-  async edit(chatId: number, threadId: number, id: number, description: string): Promise<HomeworkItem | null> {
-    const found = await this.findItem(chatId, threadId, id);
-    if (!found || found.item.archived) return null;
+  async edit(chatId: number, threadId: number, id: number, description: string, userId?: number): Promise<HomeworkItem | null> {
+    const found = await this.findItemById(id);
+    if (!found) return null;
+    await this.assertCanMutate(found.item.authorId, userId);
     const item = await this.prisma.homeworkItem.update({ where: { id }, data: { description } });
     return this.toHomeworkItem(item, found.type);
   }
 
-  async remove(chatId: number, threadId: number, id: number): Promise<{ removed: boolean; type?: HomeworkType }> {
-    const found = await this.findItem(chatId, threadId, id);
-    if (!found || found.item.archived) return { removed: false };
+  async remove(chatId: number, threadId: number, id: number, userId?: number): Promise<{ removed: boolean; type?: HomeworkType }> {
+    const found = await this.findItemById(id);
+    if (!found) return { removed: false };
+    await this.assertCanMutate(found.item.authorId, userId);
     const result = await this.prisma.homeworkItem.deleteMany({ where: { id } });
     return { removed: result.count === 1, type: found.type };
   }
@@ -108,7 +110,7 @@ export class HomeworkStore {
   }
 
   async getLegacyPersistentMessages(): Promise<LegacyPersistentMessage[]> {
-    const messages = await this.prisma.persistentMessage.findMany({ where: { messageId: { gt: 0 } }, select: { messageId: true, messageType: true, destinationChatId: true, topic: { select: { messageThreadId: true, group: { select: { chatId: true } } } } } });
+    const messages = await this.prisma.persistentMessage.findMany({ where: { messageId: { gt: 0 } }, select: { messageId: true, messageType: true, destinationChatId: true, topic: { select: { messageThreadId: true, group: { select: { chatId: true } } } } });
     return messages.map((message) => ({ messageId: message.messageId, messageType: message.messageType, destinationChatId: message.destinationChatId == null ? Number(message.topic.group.chatId) : Number(message.destinationChatId), topicChatId: Number(message.topic.group.chatId), threadId: message.topic.messageThreadId }));
   }
 
@@ -154,6 +156,19 @@ export class HomeworkStore {
     if (!item) return null;
     return { item: this.toHomeworkItem(item, item.list.type), type: item.list.type };
   }
+
+  private async findItemById(id: number): Promise<{ item: HomeworkItem; type: HomeworkType } | null> {
+    const item = await this.prisma.homeworkItem.findUnique({ where: { id }, include: { list: { select: { type: true } } } });
+    if (!item) return null;
+    return { item: this.toHomeworkItem(item, item.list.type), type: item.list.type };
+  }
+
+  private async assertCanMutate(authorId: number, userId?: number): Promise<void> {
+    if (userId === undefined) return;
+    const user = await this.prisma.telegramUser.findUnique({ where: { telegramId: BigInt(userId) }, select: { id: true } });
+    if (!user || user.id !== authorId) throw new Error("Нет прав на изменение этого ДЗ.");
+  }
+
   private async ensureList(topicId: number, type: HomeworkType) {
     return this.prisma.$transaction(async (tx) => { await this.lockHomeworkList(tx, topicId, type); return tx.homeworkList.upsert({ where: { topicId_type: { topicId, type } }, update: {}, create: { topicId, type }, include: { items: { where: { archived: false }, orderBy: { id: "asc" } } } }); });
   }
