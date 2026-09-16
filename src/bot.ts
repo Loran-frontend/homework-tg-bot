@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { HomeworkStore } from "./store.js";
-import { formatPersistentMessages, IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject, subgroupLabel } from "./format.js";
+import { formatPersistentMessages, IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject } from "./format.js";
 import { parseAddCommand } from "./add-flow.js";
 import type { HomeworkSubgroup, HomeworkType, PersistentMessageType } from "./types.js";
 
@@ -17,7 +17,6 @@ const COMMAND_HELP = [
   "/delete <номер> — удалить ДЗ",
   "/list — обновить список ДЗ",
   "/done <номер> — отметить ДЗ выполненным",
-  "/group — выбрать подгруппу",
   "/setactive <chat_id> <thread_id> | here — куда отправлять актуальные ДЗ",
   "/setarchive <chat_id> <thread_id> | here — куда отправлять архив ДЗ",
   "/settings — показать настройки вывода для текущего Topic",
@@ -85,20 +84,6 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     state.subgroup = subgroup;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Введите срок: ДД.ММ.ГГГГ ЧЧ:ММ\nИли напишите: без срока");
-  }));
-
-  bot.command("group", async (ctx) => runCommand(ctx, async () => {
-    const command = getCommandContext(ctx);
-    await replyInTopic(ctx, "Выберите свою подгруппу:", command.topic, subgroupKeyboard("group:"));
-  }));
-
-  bot.callbackQuery(/^group:(ALL|GROUP_1|GROUP_2)$/, async (ctx) => runCommand(ctx, async () => {
-    const command = getCallbackContext(ctx);
-    const subgroup = getCallbackData(ctx).split(":")[1];
-    if (subgroup !== "ALL" && subgroup !== "GROUP_1" && subgroup !== "GROUP_2") throw new Error("Недопустимая подгруппа.");
-    await store.setUserSubgroup(command.userId, subgroup, userInput(ctx));
-    await ctx.answerCallbackQuery("Подгруппа сохранена");
-    await ctx.editMessageText(`Подгруппа: ${subgroupLabel(subgroup)}`);
   }));
 
   bot.command("setactive", async (ctx) => runCommand(ctx, async () => {
