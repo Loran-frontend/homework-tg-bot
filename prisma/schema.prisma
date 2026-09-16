@@ -78,12 +78,13 @@ model HomeworkList {
 }
 
 model PersistentMessage {
-  id          Int                   @id @default(autoincrement())
-  topicId     Int
-  messageType PersistentMessageType
-  messageId   Int
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
+  id                 Int                   @id @default(autoincrement())
+  topicId            Int
+  messageType        PersistentMessageType
+  messageId          Int
+  destinationChatId  BigInt?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
 
   topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
