@@ -5,25 +5,34 @@ Telegram-бот для ведения домашнего задания внут
 ## Возможности
 
 - отдельный список ДЗ для каждой пары `chat_id + message_thread_id`;
+- ровно один `HomeworkList` на каждый topic благодаря уникальному ограничению БД;
 - одно основное сообщение со списком ДЗ на каждый topic;
+- хранение Telegram-групп, topics, пользователей, авторов заданий и дат создания/изменения;
+- атомарное переключение статуса выполнения;
 - `/add`, `/edit`, `/delete`, `/list`, `/done`;
-- данные сохраняются в JSON-файл и не пропадают после перезапуска;
-- сообщение автоматически создаётся заново, если сохранённое сообщение больше нельзя редактировать.
+- PostgreSQL + Prisma вместо JSON-файла;
+- уникальные ограничения и транзакционные upsert-операции защищают создание group/topic/list от дублей при конкурентных запросах.
 
 ## Запуск
 
-Требуется Node.js 22+.
+Требуется Node.js 22+ и PostgreSQL.
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-В `.env` укажите токен бота от BotFather:
+В `.env` укажите токен бота и строку подключения PostgreSQL:
 
 ```env
 BOT_TOKEN=123456:your-token
-DATA_FILE=./data/homework.json
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/homework_bot?schema=public
+```
+
+Применить миграции:
+
+```bash
+npm run prisma:deploy
 ```
 
 Запуск в разработке:
@@ -32,7 +41,7 @@ DATA_FILE=./data/homework.json
 npm run dev
 ```
 
-Проверка TypeScript:
+Сборка и проверка TypeScript:
 
 ```bash
 npm run build
@@ -48,7 +57,18 @@ npm run build
 /done 1
 ```
 
-Команды должны отправляться в том topic, к которому относится список.
+Команды должны отправляться в тот topic, к которому относится список.
+
+## Модель данных
+
+```text
+TelegramGroup
+  └── Topic (unique: groupId + messageThreadId)
+        └── HomeworkList (unique: topicId)
+              └── HomeworkItem ──> TelegramUser (author)
+```
+
+`TelegramGroup.chatId` и `TelegramUser.telegramId` хранятся как PostgreSQL `BIGINT`, а `Topic.messageThreadId` и `HomeworkList.primaryMessageId` — как `INTEGER`.
 
 ## Важно для Telegram
 
