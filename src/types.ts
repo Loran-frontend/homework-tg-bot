@@ -42,7 +42,9 @@ export interface TopicMessages {
   chatId: number;
   threadId: number;
   activeMessageId?: number;
+  activeChatId?: number;
   archiveMessageId?: number;
+  archiveChatId?: number;
   active: TopicHomework[];
   archive: TopicHomework[];
 }
