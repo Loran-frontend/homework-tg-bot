@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { HomeworkStore } from "./store.js";
 import { formatPersistentMessages, IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject, subgroupLabel } from "./format.js";
+import { parseAddCommand } from "./add-flow.js";
 import type { HomeworkSubgroup, HomeworkType, PersistentMessageType } from "./types.js";
 
 type Topic = { chatId: number; threadId: number };
@@ -9,7 +10,8 @@ type AddState = { topic: Topic; userId: number; type?: HomeworkType; subject?: s
 
 const COMMAND_HELP = [
   "Команды:",
-  "/add — добавить ДЗ",
+  "/add — добавить ДЗ через пошаговую форму",
+  "/add <текст> [| ДД.ММ.ГГГГ ЧЧ:ММ] — быстрый вариант",
   "/edit <номер> <текст> — изменить ДЗ",
   "/delete <номер> — удалить ДЗ",
   "/list — обновить список ДЗ",
@@ -35,6 +37,19 @@ export function createBot(token: string, store: HomeworkStore): Bot {
 
   bot.command("add", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
+    const input = ctx.match.trim();
+
+    if (input) {
+      const parsed = parseAddCommand(input);
+      if (!parsed) {
+        throw new Error("Использование: /add <текст> | ДД.ММ.ГГГГ ЧЧ:ММ");
+      }
+      await store.addHomework(command.topic, parsed.type, parsed.subject, parsed.description, parsed.subgroup, parsed.deadline, userInput(ctx));
+      await refreshOutputMessages(ctx, store, command.topic);
+      await replyInTopic(ctx, "✅ ДЗ добавлено.", command.topic);
+      return;
+    }
+
     addStates.set(stateKey(command.topic, command.userId), { topic: command.topic, userId: command.userId });
     await replyInTopic(ctx, "Выберите тип ДЗ:", command.topic, new InlineKeyboard().text("📚 ИРНИТУ", "add:type:IRNITU").text("📘 МФТИ", "add:type:MIPT"));
   }));
@@ -70,7 +85,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     if (subgroup !== "ALL" && subgroup !== "GROUP_1" && subgroup !== "GROUP_2") throw new Error("Недопустимая подгруппа.");
     state.subgroup = subgroup;
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Введите срок: ДД.ММ.ГГГГ ЧЧ:ММ");
+    await ctx.editMessageText("Введите срок: ДД.ММ.ГГГГ ЧЧ:ММ\nИли напишите: без срока");
   }));
 
   bot.command("group", async (ctx) => runCommand(ctx, async () => {
@@ -117,7 +132,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     const topic = getTopicFromMessage(ctx);
     if (!topic) return next();
     const userId = getUserId(ctx);
-    const state = addStates.get(stateKey(topic, userId));
+    const state = findAddState(topic, userId);
     if (!state || !state.type || !state.subject || !state.subgroup) return next();
 
     await runCommand(ctx, async () => {
@@ -127,12 +142,17 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       if (!type || !subject || !subgroup) return;
 
       if (!state.deadline) {
-        const deadline = parseDeadline(ctx.message.text.trim());
-        if (!deadline) {
-          await replyInTopic(ctx, "Неверный срок. Формат: ДД.ММ.ГГГГ ЧЧ:ММ", topic);
-          return;
+        const input = ctx.message.text.trim();
+        if (input.toLowerCase() === "без срока") {
+          state.deadline = new Date(0);
+        } else {
+          const deadline = parseDeadline(input);
+          if (!deadline) {
+            await replyInTopic(ctx, "Неверный срок. Формат: ДД.ММ.ГГГГ ЧЧ:ММ\nИли напишите: без срока", topic);
+            return;
+          }
+          state.deadline = deadline;
         }
-        state.deadline = deadline;
         await replyInTopic(ctx, "Теперь отправьте текст задания.", topic);
         return;
       }
@@ -143,8 +163,9 @@ export function createBot(token: string, store: HomeworkStore): Bot {
         return;
       }
 
-      await store.addHomework(topic, type, subject, description, subgroup, state.deadline, userInput(ctx));
-      addStates.delete(stateKey(topic, userId));
+      const deadline = state.deadline.getTime() === 0 ? null : state.deadline;
+      await store.addHomework(topic, type, subject, description, subgroup, deadline, userInput(ctx));
+      deleteAddState(state);
       await refreshOutputMessages(ctx, store, topic);
       await replyInTopic(ctx, "✅ ДЗ добавлено.", topic);
     });
@@ -207,9 +228,22 @@ function getCallbackContext(ctx: Context): CommandContext {
 
 function getAddState(ctx: Context): AddState {
   const command = getCallbackContext(ctx);
-  const state = addStates.get(stateKey(command.topic, command.userId));
+  const state = findAddState(command.topic, command.userId);
   if (!state) throw new Error("Сессия добавления ДЗ не найдена. Повторите /add.");
   return state;
+}
+
+function findAddState(topic: Topic, userId: number): AddState | undefined {
+  const exact = addStates.get(stateKey(topic, userId));
+  if (exact) return exact;
+
+  const candidates = [...addStates.values()].filter((state) => state.topic.chatId === topic.chatId && state.userId === userId);
+  if (candidates.length !== 1) return undefined;
+  return candidates[0];
+}
+
+function deleteAddState(state: AddState): void {
+  addStates.delete(stateKey(state.topic, state.userId));
 }
 
 function stateKey(topic: Topic, userId: number): string {
