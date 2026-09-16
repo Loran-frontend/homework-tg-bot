@@ -38,8 +38,10 @@ export function createBot(token: string, store: HomeworkStore): Bot {
 
   bot.callbackQuery(/^add:type:(IRNITU|MIPT)$/, async (ctx) => runCommand(ctx, async () => {
     const state = getAddState(ctx);
-    const data = ctx.callbackQuery.data;
-    state.type = data.split(":")[2] as HomeworkType;
+    const data = getCallbackData(ctx);
+    const selectedType = data.split(":")[2];
+    if (selectedType !== "IRNITU" && selectedType !== "MIPT") throw new Error("Недопустимый тип ДЗ.");
+    state.type = selectedType;
     const subjects = state.type === "IRNITU" ? IRNITU_SUBJECTS : MIPT_SUBJECTS;
     const keyboard = new InlineKeyboard();
     for (const subject of subjects) keyboard.text(subject, `add:subject:${encodeURIComponent(subject)}`).row();
@@ -50,7 +52,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.callbackQuery(/^add:subject:(.+)$/, async (ctx) => runCommand(ctx, async () => {
     const state = getAddState(ctx);
     if (!state.type) throw new Error("Сначала выберите тип ДЗ.");
-    const data = ctx.callbackQuery.data;
+    const data = getCallbackData(ctx);
     const subject = decodeURIComponent(data.slice("add:subject:".length));
     if (!isValidSubject(state.type, subject)) throw new Error("Недопустимый предмет.");
     state.subject = subject;
@@ -61,8 +63,10 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.callbackQuery(/^add:subgroup:(ALL|GROUP_1|GROUP_2)$/, async (ctx) => runCommand(ctx, async () => {
     const state = getAddState(ctx);
     if (!state.type || !state.subject) throw new Error("Сначала выберите тип и предмет.");
-    const data = ctx.callbackQuery.data;
-    state.subgroup = data.split(":")[2] as HomeworkSubgroup;
+    const data = getCallbackData(ctx);
+    const subgroup = data.split(":")[2];
+    if (subgroup !== "ALL" && subgroup !== "GROUP_1" && subgroup !== "GROUP_2") throw new Error("Недопустимая подгруппа.");
+    state.subgroup = subgroup;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Введите срок: ДД.ММ.ГГГГ ЧЧ:ММ");
   }));
@@ -74,8 +78,9 @@ export function createBot(token: string, store: HomeworkStore): Bot {
 
   bot.callbackQuery(/^group:(ALL|GROUP_1|GROUP_2)$/, async (ctx) => runCommand(ctx, async () => {
     const command = getCallbackContext(ctx);
-    const data = ctx.callbackQuery.data;
-    const subgroup = data.split(":")[1] as HomeworkSubgroup;
+    const data = getCallbackData(ctx);
+    const subgroup = data.split(":")[1];
+    if (subgroup !== "ALL" && subgroup !== "GROUP_1" && subgroup !== "GROUP_2") throw new Error("Недопустимая подгруппа.");
     await store.setUserSubgroup(command.userId, subgroup, userInput(ctx));
     await ctx.answerCallbackQuery("Подгруппа сохранена");
     await ctx.editMessageText(`Подгруппа: ${subgroupLabel(subgroup)}`);
@@ -89,6 +94,11 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     if (!state || !state.type || !state.subject || !state.subgroup) return next();
 
     await runCommand(ctx, async () => {
+      const type = state.type;
+      const subject = state.subject;
+      const subgroup = state.subgroup;
+      if (!type || !subject || !subgroup) return;
+
       if (!state.deadline) {
         const deadline = parseDeadline(ctx.message.text.trim());
         if (!deadline) {
@@ -100,6 +110,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
         return;
       }
 
+      const deadline = state.deadline;
       const description = ctx.message.text.trim();
       if (!description) {
         await replyInTopic(ctx, "Текст задания не может быть пустым.", topic);
@@ -107,11 +118,11 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       }
 
       await store.add(topic.chatId, topic.threadId, {
-        type: state.type,
-        subject: state.subject,
+        type,
+        subject,
         description,
-        subgroup: state.subgroup,
-        deadline: state.deadline,
+        subgroup,
+        deadline,
       }, userInput(ctx));
       addStates.delete(stateKey(topic, userId));
       await refreshPersistentMessages(ctx, store, topic);
@@ -200,11 +211,7 @@ async function refreshPersistentMessage(ctx: Context, store: HomeworkStore, topi
     });
   });
   refreshLocks.set(key, current);
-  try {
-    await current;
-  } finally {
-    if (refreshLocks.get(key) === current) refreshLocks.delete(key);
-  }
+  try { await current; } finally { if (refreshLocks.get(key) === current) refreshLocks.delete(key); }
 }
 
 function subgroupKeyboard(prefix: string): InlineKeyboard {
@@ -221,11 +228,17 @@ function getAddState(ctx: Context): AddState {
 }
 
 function getCallbackContext(ctx: Context): CommandContext {
-  const message = ctx.callbackQuery.message;
+  const message = ctx.callbackQuery?.message;
   if (!message || message.chat.type !== "supergroup" || !("message_thread_id" in message) || message.message_thread_id === undefined) {
     throw new Error("Выбор должен выполняться внутри Topic.");
   }
   return { topic: { chatId: message.chat.id, threadId: message.message_thread_id }, userId: getUserId(ctx) };
+}
+
+function getCallbackData(ctx: Context): string {
+  const data = ctx.callbackQuery?.data;
+  if (!data) throw new Error("Некорректный callback-запрос.");
+  return data;
 }
 
 function getCommandContext(ctx: Context): CommandContext { return { topic: getTopic(ctx), userId: getUserId(ctx) }; }
