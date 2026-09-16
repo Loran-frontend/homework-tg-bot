@@ -90,7 +90,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.command("setactive", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
-    await configureOutputDestination(store, command.topic, "ACTIVE", destinationChatId);
+    await configureOutputDestination(ctx, store, command.topic, "ACTIVE", destinationChatId);
     await refreshOutputMessage(ctx, store, command.topic, "ACTIVE");
     await replyInTopic(ctx, `Актуальные ДЗ теперь находятся в ${formatDestination(command.topic, destinationChatId)}.`, command.topic);
   }));
@@ -98,7 +98,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
   bot.command("setarchive", async (ctx) => runCommand(ctx, async () => {
     const command = getCommandContext(ctx);
     const destinationChatId = parseDestinationChatId(ctx.match, command.topic.chatId);
-    await configureOutputDestination(store, command.topic, "ARCHIVE", destinationChatId);
+    await configureOutputDestination(ctx, store, command.topic, "ARCHIVE", destinationChatId);
     await refreshOutputMessage(ctx, store, command.topic, "ARCHIVE");
     await replyInTopic(ctx, `Архив ДЗ теперь находится в ${formatDestination(command.topic, destinationChatId)}.`, command.topic);
   }));
@@ -281,10 +281,10 @@ function parseDestinationChatId(value: string, currentChatId: number): number {
   return id;
 }
 
-async function configureOutputDestination(store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
+async function configureOutputDestination(ctx: Context, store: HomeworkStore, topic: Topic, messageType: PersistentMessageType, destinationChatId: number): Promise<void> {
   const previous = await store.getPersistentMessageInfo(topic.chatId, topic.threadId, messageType);
   if (previous?.messageId && previous.destinationChatId !== null) {
-    try { await store.deleteOutputTelegramMessage(previous.destinationChatId, previous.messageId); } catch { /* message may already be deleted */ }
+    try { await ctx.api.deleteMessage(previous.destinationChatId, previous.messageId); } catch { /* message may already be deleted */ }
   }
   await store.setPersistentMessageDestination(topic.chatId, topic.threadId, messageType, destinationChatId);
 }
@@ -308,7 +308,7 @@ async function refreshOutputMessage(ctx: Context, store: HomeworkStore, topic: T
 
       if (messageId) {
         try {
-          await editOutputMessage(ctx, destinationChatId, topic, messageId, text);
+          await editOutputMessage(ctx, destinationChatId, messageId, text);
           return;
         } catch (error) {
           console.warn(`Could not edit ${messageType} output message:`, error);
@@ -335,7 +335,7 @@ async function sendOutputMessage(ctx: Context, destinationChatId: number, source
   return ctx.api.sendMessage(destinationChatId, text, options);
 }
 
-async function editOutputMessage(ctx: Context, destinationChatId: number, sourceTopic: Topic, messageId: number, text: string): Promise<unknown> {
+async function editOutputMessage(ctx: Context, destinationChatId: number, messageId: number, text: string): Promise<unknown> {
   return ctx.api.editMessageText(destinationChatId, messageId, text, { parse_mode: "HTML" });
 }
 
