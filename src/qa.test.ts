@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseAddCommand } from "./add-flow.js";
 import { parseDeadline, parseEditCommand, parseId } from "./bot.js";
-import { formatHomework } from "./format.js";
-import type { TopicHomework } from "./types.js";
+import { formatHomework, formatPersistentMessages } from "./format.js";
+import type { HomeworkItem, TopicHomework } from "./types.js";
 
 const makeTopic = (items: TopicHomework["items"] = []): TopicHomework => ({
   chatId: -100123,
