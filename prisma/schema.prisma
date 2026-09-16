@@ -101,6 +101,15 @@ model OutputMessage {
   updatedAt         DateTime              @updatedAt
 }
 
+model OutputMessageDestination {
+  id                  Int                   @id @default(autoincrement())
+  messageType         PersistentMessageType @unique
+  destinationChatId   BigInt
+  destinationThreadId Int?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+}
+
 model HomeworkItem {
   id          Int              @id @default(autoincrement())
   listId      Int
@@ -111,8 +120,8 @@ model HomeworkItem {
   deadline    DateTime?
   archived    Boolean          @default(false)
   completed   Boolean          @default(false)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   list        HomeworkList  @relation(fields: [listId], references: [id], onDelete: Cascade)
   author      TelegramUser  @relation("HomeworkAuthor", fields: [authorId], references: [id], onDelete: Restrict)
