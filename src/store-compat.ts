@@ -64,7 +64,7 @@ HomeworkStore.prototype.getTopicMessages = async function (chatId, threadId): Pr
 // Output messages have one global destination per type. This deliberately
 // ignores the command Topic so /add, /list and deadline archiving all update
 // the same configured ACTIVE/ARCHIVE messages.
-HomeworkStore.prototype.getPersistentMessageInfo = async function (_chatId, _threadId, messageType): Promise<PersistentMessageInfo | null> {
+HomeworkStore.prototype.getPersistentMessageInfo = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType): Promise<PersistentMessageInfo | null> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const system = await ensureSystemPersistentMessage(prisma, messageType);
   if (!system) return null;
@@ -75,7 +75,7 @@ HomeworkStore.prototype.getPersistentMessageInfo = async function (_chatId, _thr
   };
 };
 
-HomeworkStore.prototype.setPersistentMessageDestination = async function (_chatId, _threadId, messageType, destinationChatId, destinationThreadId): Promise<void> {
+HomeworkStore.prototype.setPersistentMessageDestination = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType, destinationChatId: number, destinationThreadId: number | null): Promise<void> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const topic = await ensureSystemTopic(prisma);
   await prisma.persistentMessage.upsert({
@@ -85,15 +85,15 @@ HomeworkStore.prototype.setPersistentMessageDestination = async function (_chatI
   });
 };
 
-HomeworkStore.prototype.getPersistentMessageId = async function (_chatId, _threadId, messageType): Promise<number | null> {
+HomeworkStore.prototype.getPersistentMessageId = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType): Promise<number | null> {
   const info = await this.getPersistentMessageInfo(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, messageType);
   return info?.messageId && info.messageId > 0 ? info.messageId : null;
 };
 
 HomeworkStore.prototype.withPersistentMessageLock = async function <T>(
-  _chatId,
-  _threadId,
-  messageType,
+  _chatId: number,
+  _threadId: number,
+  messageType: PersistentMessageType,
   callback: (messageId: number | null, setMessageId: (id: number) => Promise<void>) => Promise<T>,
 ): Promise<T> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
