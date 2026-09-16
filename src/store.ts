@@ -123,13 +123,6 @@ export class HomeworkStore {
     return [...topics.values()];
   }
 
-  async setUserSubgroup(telegramId: number, subgroup: HomeworkSubgroup, input?: TelegramUserInput): Promise<void> {
-    await this.prisma.telegramUser.upsert({ where: { telegramId: BigInt(telegramId) }, update: { subgroup, username: input?.username, firstName: input?.firstName, lastName: input?.lastName }, create: { telegramId: BigInt(telegramId), subgroup, username: input?.username, firstName: input?.firstName, lastName: input?.lastName } });
-  }
-  async getUserSubgroup(telegramId: number): Promise<HomeworkSubgroup> {
-    const user = await this.prisma.telegramUser.findUnique({ where: { telegramId: BigInt(telegramId) }, select: { subgroup: true } });
-    return user?.subgroup ?? "ALL";
-  }
   async ensureTopic(chatId: number, threadId: number, type: HomeworkType = "IRNITU"): Promise<TopicHomework> {
     return this.prisma.$transaction(async (tx) => {
       const { list } = await this.ensureContext(tx, chatId, threadId, type);
