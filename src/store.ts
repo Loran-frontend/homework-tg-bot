@@ -54,10 +54,14 @@ export class HomeworkStore {
     const topic = await this.getTopicRecord(chatId, threadId);
     if (!topic) return null;
 
-    const item = await this.prisma.homeworkItem.findFirst({ where: { id, listId: topic.homeworkList.id } });
-    if (!item) return null;
+    const rows = await this.prisma.$queryRaw<HomeworkItem[]>(Prisma.sql`
+      UPDATE "HomeworkItem"
+      SET "completed" = NOT "completed", "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${id} AND "listId" = ${topic.homeworkList.id}
+      RETURNING "id", "text", "completed", "authorId", "createdAt", "updatedAt"
+    `);
 
-    return this.prisma.homeworkItem.update({ where: { id }, data: { completed: !item.completed } });
+    return rows[0] ?? null;
   }
 
   async setMessageId(chatId: number, threadId: number, messageId: number | null): Promise<void> {
