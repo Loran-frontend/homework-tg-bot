@@ -44,17 +44,21 @@ export function createBot(token: string, store: HomeworkStore): Bot {
     state.type = selectedType;
     const subjects = state.type === "IRNITU" ? IRNITU_SUBJECTS : MIPT_SUBJECTS;
     const keyboard = new InlineKeyboard();
-    for (const subject of subjects) keyboard.text(subject, `add:subject:${encodeURIComponent(subject)}`).row();
+    for (let index = 0; index < subjects.length; index += 1) {
+      keyboard.text(subjects[index], `add:subject:${index}`).row();
+    }
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Выберите предмет:", { reply_markup: keyboard });
   }));
 
-  bot.callbackQuery(/^add:subject:(.+)$/, async (ctx) => runCommand(ctx, async () => {
+  bot.callbackQuery(/^add:subject:(\d+)$/, async (ctx) => runCommand(ctx, async () => {
     const state = getAddState(ctx);
     if (!state.type) throw new Error("Сначала выберите тип ДЗ.");
     const data = getCallbackData(ctx);
-    const subject = decodeURIComponent(data.slice("add:subject:".length));
-    if (!isValidSubject(state.type, subject)) throw new Error("Недопустимый предмет.");
+    const index = Number(data.slice("add:subject:".length));
+    const subjects = state.type === "IRNITU" ? IRNITU_SUBJECTS : MIPT_SUBJECTS;
+    const subject = subjects[index];
+    if (!subject || !isValidSubject(state.type, subject)) throw new Error("Недопустимый предмет.");
     state.subject = subject;
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Для кого это ДЗ?", { reply_markup: subgroupKeyboard("add:subgroup:") });
