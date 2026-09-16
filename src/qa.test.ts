@@ -2,14 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseAddCommand } from "./add-flow.js";
 import { parseDeadline, parseEditCommand, parseId, parseOutputDestination } from "./bot.js";
-import { formatHomework } from "./format.js";
-import type { TopicHomework } from "./types.js";
+import { formatHomework, formatPersistentMessages } from "./format.js";
+import type { HomeworkItem, TopicHomework } from "./types.js";
 
 const makeTopic = (items: TopicHomework["items"] = []): TopicHomework => ({
   chatId: -100123,
   threadId: 1,
   type: "IRNITU",
   items,
+});
+
+const makeItem = (subgroup: HomeworkItem["subgroup"], id: number): HomeworkItem => ({
+  id,
+  type: "IRNITU",
+  subject: "Вычислительная математика",
+  description: `Задание ${id}`,
+  subgroup,
+  deadline: null,
+  archived: false,
+  completed: false,
+  authorId: 10,
+  createdAt: new Date(),
+  updatedAt: new Date(),
 });
 
 test("command argument edge cases", () => {
@@ -82,6 +96,27 @@ test("homework text is safely formatted as HTML", () => {
   assert.match(text, /&lt;script&gt;/);
   assert.match(text, /&amp; dangerous/);
   assert.ok(!text.includes("<script>"));
+});
+
+test("all homework subgroups are displayed without user-subgroup filtering", () => {
+  const data = {
+    chatId: -100123,
+    threadId: 1,
+    activeMessageId: undefined,
+    activeChatId: undefined,
+    archiveMessageId: undefined,
+    archiveChatId: undefined,
+    active: [{ ...makeTopic([makeItem("GROUP_1", 1), makeItem("GROUP_2", 2), makeItem("ALL", 3)]) }],
+    archive: [],
+  };
+
+  const text = formatPersistentMessages(data).active;
+  assert.match(text, /1 подгруппа/);
+  assert.match(text, /2 подгруппа/);
+  assert.match(text, /Все/);
+  assert.match(text, /Задание 1/);
+  assert.match(text, /Задание 2/);
+  assert.match(text, /Задание 3/);
 });
 
 test("empty topic produces a valid primary-message body", () => {
