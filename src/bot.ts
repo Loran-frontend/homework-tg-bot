@@ -11,6 +11,8 @@ const COMMAND_HELP = [
   "/done <номер> — отметить/снять выполнение",
 ].join("\n");
 
+const refreshLocks = new Map<string, Promise<void>>();
+
 export function createBot(token: string, store: HomeworkStore): Bot {
   const bot = new Bot(token);
 
@@ -122,6 +124,19 @@ async function replyInTopic(ctx: Context, text: string, topic?: Topic): Promise<
 }
 
 async function refreshMessage(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
+  const key = `${topic.chatId}:${topic.threadId}`;
+  const previous = refreshLocks.get(key) ?? Promise.resolve();
+  const current = previous.then(() => refreshMessageUnsafe(ctx, store, topic));
+  refreshLocks.set(key, current);
+
+  try {
+    await current;
+  } finally {
+    if (refreshLocks.get(key) === current) refreshLocks.delete(key);
+  }
+}
+
+async function refreshMessageUnsafe(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
   const data = await store.getTopic(topic.chatId, topic.threadId);
   const text = formatHomework(data);
 
