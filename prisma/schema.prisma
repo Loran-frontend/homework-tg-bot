@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TelegramGroup {
+  id        Int      @id @default(autoincrement())
+  chatId    BigInt   @unique
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  topics    Topic[]
+}
+
+model Topic {
+  id               Int          @id @default(autoincrement())
+  groupId          Int
+  messageThreadId  Int
+  name             String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  group            TelegramGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  homeworkList     HomeworkList?
+
+  @@unique([groupId, messageThreadId])
+  @@index([groupId])
+}
+
+model TelegramUser {
+  id          Int      @id @default(autoincrement())
+  telegramId  BigInt   @unique
+  username    String?
+  firstName   String?
+  lastName    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  authoredHomework HomeworkItem[] @relation("HomeworkAuthor")
+}
+
+model HomeworkList {
+  id               Int           @id @default(autoincrement())
+  topicId          Int           @unique
+  primaryMessageId Int?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  topic            Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  items            HomeworkItem[]
+}
+
+model HomeworkItem {
+  id          Int           @id @default(autoincrement())
+  listId      Int
+  authorId    Int
+  text        String
+  completed   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  list        HomeworkList  @relation(fields: [listId], references: [id], onDelete: Cascade)
+  author      TelegramUser  @relation("HomeworkAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([listId, createdAt])
+  @@index([authorId])
+}
