@@ -35,7 +35,7 @@ export class HomeworkStore {
 
   async edit(chatId: number, threadId: number, id: number, text: string): Promise<HomeworkItem | null> {
     const topic = await this.getTopicRecord(chatId, threadId);
-    if (!topic) return null;
+    if (!topic?.homeworkList) return null;
 
     const item = await this.prisma.homeworkItem.findFirst({ where: { id, listId: topic.homeworkList.id } });
     if (!item) return null;
@@ -44,7 +44,7 @@ export class HomeworkStore {
 
   async remove(chatId: number, threadId: number, id: number): Promise<boolean> {
     const topic = await this.getTopicRecord(chatId, threadId);
-    if (!topic) return false;
+    if (!topic?.homeworkList) return false;
 
     const result = await this.prisma.homeworkItem.deleteMany({ where: { id, listId: topic.homeworkList.id } });
     return result.count === 1;
@@ -52,7 +52,7 @@ export class HomeworkStore {
 
   async markDone(chatId: number, threadId: number, id: number): Promise<{ item: HomeworkItem; alreadyDone: boolean } | null> {
     const topic = await this.getTopicRecord(chatId, threadId);
-    if (!topic) return null;
+    if (!topic?.homeworkList) return null;
 
     const item = await this.prisma.homeworkItem.findFirst({
       where: { id, listId: topic.homeworkList.id },
@@ -69,7 +69,7 @@ export class HomeworkStore {
 
   async setMessageId(chatId: number, threadId: number, messageId: number | null): Promise<void> {
     const topic = await this.getTopicRecord(chatId, threadId);
-    if (!topic) {
+    if (!topic?.homeworkList) {
       await this.ensureTopic(chatId, threadId);
       return this.setMessageId(chatId, threadId, messageId);
     }
