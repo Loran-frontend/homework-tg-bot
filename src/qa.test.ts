@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseAddCommand } from "./add-flow.js";
-import { parseDeadline, parseEditCommand, parseId } from "./bot.js";
+import { parseDeadline, parseEditCommand, parseId, parseOutputDestination } from "./bot.js";
 import { formatHomework } from "./format.js";
 import type { TopicHomework } from "./types.js";
 
@@ -27,6 +27,16 @@ test("command argument edge cases", () => {
   assert.equal(parseEditCommand("1"), null);
   assert.equal(parseEditCommand("-1 текст"), null);
   assert.equal(parseEditCommand("abc текст"), null);
+});
+
+test("output destination is independent from the command topic", () => {
+  const current = { chatId: -100123, threadId: 123 };
+  assert.deepEqual(parseOutputDestination("here", current), current);
+  assert.deepEqual(parseOutputDestination("-100456 789", current), { chatId: -100456, threadId: 789 });
+  assert.deepEqual(parseOutputDestination("-100456:789", current), { chatId: -100456, threadId: 789 });
+  assert.deepEqual(parseOutputDestination("here:321", current), { chatId: -100123, threadId: 321 });
+  assert.throws(() => parseOutputDestination("-100456", current));
+  assert.throws(() => parseOutputDestination("-100456 -1", current));
 });
 
 test("direct /add command parser supports legacy text and optional deadline", () => {
