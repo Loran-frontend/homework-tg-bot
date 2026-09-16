@@ -5,6 +5,11 @@ import type { HomeworkItem, HomeworkSubgroup, HomeworkType, PersistentMessageTyp
 type Topic = { chatId: number; threadId: number };
 type PersistentMessageInfo = { messageId: number; destinationChatId: number | null; destinationThreadId: number | null };
 
+type PersistentMessageCallback = (
+  messageId: number | null,
+  setMessageId: (id: number) => Promise<void>,
+) => Promise<unknown>;
+
 declare module "./store.js" {
   interface HomeworkStore {
     addHomework(topic: Topic, type: HomeworkType, subject: string, description: string, subgroup: HomeworkSubgroup, deadline: Date | null, author: TelegramUserInput): Promise<HomeworkItem>;
@@ -15,19 +20,36 @@ declare module "./store.js" {
 
 const SYSTEM_TOPIC: Topic = { chatId: 0, threadId: 0 };
 
-HomeworkStore.prototype.addHomework = function (_topic, type, subject, description, subgroup, deadline, author) {
+HomeworkStore.prototype.addHomework = function (
+  _topic: Topic,
+  type: HomeworkType,
+  subject: string,
+  description: string,
+  subgroup: HomeworkSubgroup,
+  deadline: Date | null,
+  author: TelegramUserInput,
+): Promise<HomeworkItem> {
   return this.add(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, { type, subject, description, subgroup, deadline }, author);
 };
 
-HomeworkStore.prototype.editHomework = function (_topic, id, description, userId) {
+HomeworkStore.prototype.editHomework = function (
+  _topic: Topic,
+  id: number,
+  description: string,
+  userId?: number,
+): Promise<HomeworkItem | null> {
   return this.edit(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, id, description, userId);
 };
 
-HomeworkStore.prototype.deleteHomework = function (_topic, id, userId) {
+HomeworkStore.prototype.deleteHomework = function (
+  _topic: Topic,
+  id: number,
+  userId?: number,
+): Promise<{ removed: boolean; type?: HomeworkType }> {
   return this.remove(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, id, userId);
 };
 
-HomeworkStore.prototype.getTopicMessages = async function (chatId, threadId): Promise<TopicMessages> {
+HomeworkStore.prototype.getTopicMessages = async function (chatId: number, threadId: number): Promise<TopicMessages> {
   await this.archiveExpired();
   const [active, archive, miptActive, miptArchive] = await Promise.all([
     this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "IRNITU", false),
@@ -42,17 +64,26 @@ HomeworkStore.prototype.getTopicMessages = async function (chatId, threadId): Pr
   });
   const activeMessage = messages.find((message) => message.messageType === "ACTIVE");
   const archiveMessage = messages.find((message) => message.messageType === "ARCHIVE");
-  return { chatId, threadId, activeMessageId: activeMessage?.messageId, activeChatId: activeMessage?.destinationChatId == null ? undefined : Number(activeMessage.destinationChatId), archiveMessageId: archiveMessage?.messageId, archiveChatId: archiveMessage?.destinationChatId == null ? undefined : Number(archiveMessage.destinationChatId), active: [active, miptActive], archive: [archive, miptArchive] };
+  return {
+    chatId,
+    threadId,
+    activeMessageId: activeMessage?.messageId,
+    activeChatId: activeMessage?.destinationChatId == null ? undefined : Number(activeMessage.destinationChatId),
+    archiveMessageId: archiveMessage?.messageId,
+    archiveChatId: archiveMessage?.destinationChatId == null ? undefined : Number(archiveMessage.destinationChatId),
+    active: [active, miptActive],
+    archive: [archive, miptArchive],
+  };
 };
 
-HomeworkStore.prototype.getPersistentMessageInfo = async function (_chatId, _threadId, messageType): Promise<PersistentMessageInfo | null> {
+HomeworkStore.prototype.getPersistentMessageInfo = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType): Promise<PersistentMessageInfo | null> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const system = await ensureSystemPersistentMessage(prisma, messageType);
   if (!system) return null;
   return { messageId: system.messageId, destinationChatId: system.destinationChatId == null ? null : Number(system.destinationChatId), destinationThreadId: system.destinationThreadId };
 };
 
-HomeworkStore.prototype.setPersistentMessageDestination = async function (_chatId, _threadId, messageType, destinationChatId, destinationThreadId): Promise<void> {
+HomeworkStore.prototype.setPersistentMessageDestination = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType, destinationChatId: number, destinationThreadId: number | null): Promise<void> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const topic = await ensureSystemTopic(prisma);
   await prisma.persistentMessage.upsert({
@@ -62,12 +93,17 @@ HomeworkStore.prototype.setPersistentMessageDestination = async function (_chatI
   });
 };
 
-HomeworkStore.prototype.getPersistentMessageId = async function (_chatId, _threadId, messageType): Promise<number | null> {
+HomeworkStore.prototype.getPersistentMessageId = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType): Promise<number | null> {
   const info = await this.getPersistentMessageInfo(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, messageType);
   return info?.messageId && info.messageId > 0 ? info.messageId : null;
 };
 
-HomeworkStore.prototype.withPersistentMessageLock = async function <T>(_chatId, _threadId, messageType, callback): Promise<T> {
+HomeworkStore.prototype.withPersistentMessageLock = async function <T>(
+  _chatId: number,
+  _threadId: number,
+  messageType: PersistentMessageType,
+  callback: PersistentMessageCallback,
+): Promise<T> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   return prisma.$transaction(async (tx) => {
     const topic = await ensureSystemTopic(tx);
@@ -77,11 +113,11 @@ HomeworkStore.prototype.withPersistentMessageLock = async function <T>(_chatId, 
     const setMessageId = async (id: number): Promise<void> => {
       await tx.persistentMessage.upsert({ where: { topicId_messageType: { topicId: topic.id, messageType } }, update: { messageId: id }, create: { topicId: topic.id, messageType, messageId: id } });
     };
-    return callback(record?.messageId && record.messageId > 0 ? record.messageId : null, setMessageId);
+    return callback(record?.messageId && record.messageId > 0 ? record.messageId : null, setMessageId) as T;
   });
 };
 
-HomeworkStore.prototype.archiveExpired = async function (now = new Date()): Promise<Array<Topic>> {
+HomeworkStore.prototype.archiveExpired = async function (now: Date = new Date()): Promise<Array<Topic>> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const dueItems = await prisma.homeworkItem.findMany({ where: { archived: false, deadline: { lte: now } }, select: { id: true } });
   if (dueItems.length === 0) return [];
