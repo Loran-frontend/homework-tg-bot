@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "prisma generate && tsc",
-    "test": "node --import tsx --test src/bot.test.ts",
+    "test": "node --import tsx --test src",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
