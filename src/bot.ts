@@ -30,7 +30,15 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       return;
     }
 
-    await store.add(topic.chatId, topic.threadId, text);
+    const user = ctx.from;
+    if (!user) throw new Error("Не удалось определить автора команды.");
+
+    await store.add(topic.chatId, topic.threadId, text, {
+      telegramId: user.id,
+      username: user.username,
+      firstName: user.first_name,
+      lastName: user.last_name,
+    });
     await refreshMessage(ctx, store, topic);
   });
 
@@ -99,45 +107,32 @@ type Topic = {
 
 function getTopic(ctx: Context): Topic {
   const message = ctx.msg;
-  if (!message?.chat) {
-    throw new Error("Команда должна быть отправлена из сообщения чата.");
-  }
-
-  if (message.chat.type !== "supergroup") {
-    throw new Error("Бот работает только в Telegram supergroup с Topics.");
-  }
-
+  if (!message?.chat) throw new Error("Команда должна быть отправлена из сообщения чата.");
+  if (message.chat.type !== "supergroup") throw new Error("Бот работает только в Telegram supergroup с Topics.");
   if (!message.is_topic_message || message.message_thread_id === undefined) {
     throw new Error("Команда должна быть отправлена внутри Telegram Topic.");
   }
 
-  return {
-    chatId: message.chat.id,
-    threadId: message.message_thread_id,
-  };
+  return { chatId: message.chat.id, threadId: message.message_thread_id };
 }
 
 async function replyInTopic(ctx: Context, text: string, topic?: Topic): Promise<void> {
   const target = topic ?? getTopic(ctx);
-  await ctx.api.sendMessage(target.chatId, text, {
-    message_thread_id: target.threadId,
-  });
+  await ctx.api.sendMessage(target.chatId, text, { message_thread_id: target.threadId });
 }
 
 async function refreshMessage(ctx: Context, store: HomeworkStore, topic: Topic): Promise<void> {
-  const data = store.getTopic(topic.chatId, topic.threadId);
+  const data = await store.getTopic(topic.chatId, topic.threadId);
   const text = formatHomework(data);
 
   if (data.messageId) {
     try {
-      await ctx.api.editMessageText(topic.chatId, data.messageId, text, {
-        parse_mode: "HTML",
-      });
+      await ctx.api.editMessageText(topic.chatId, data.messageId, text, { parse_mode: "HTML" });
       return;
     } catch (error) {
       const description = error instanceof Error ? error.message : String(error);
       if (description.includes("message is not modified")) return;
-      data.messageId = undefined;
+      await store.setMessageId(topic.chatId, topic.threadId, null);
     }
   }
 
