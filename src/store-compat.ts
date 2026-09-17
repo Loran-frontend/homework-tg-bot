@@ -15,6 +15,7 @@ declare module "./store.js" {
     addHomework(topic: Topic, type: HomeworkType, subject: string, description: string, subgroup: HomeworkSubgroup, deadline: Date | null, author: TelegramUserInput): Promise<HomeworkItem>;
     editHomework(topic: Topic, id: number, description: string, userId?: number, author?: TelegramUserInput): Promise<HomeworkItem | null>;
     deleteHomework(topic: Topic, id: number, userId?: number, author?: TelegramUserInput): Promise<{ removed: boolean; type?: HomeworkType }>;
+    setPersistentMessageId(chatId: number, threadId: number, messageType: PersistentMessageType, messageId: number): Promise<void>;
   }
 }
 
@@ -81,6 +82,15 @@ HomeworkStore.prototype.getPersistentMessageInfo = async function (_chatId: numb
   const system = await ensureSystemPersistentMessage(prisma, messageType);
   if (!system) return null;
   return { messageId: system.messageId, destinationChatId: system.destinationChatId == null ? null : Number(system.destinationChatId), destinationThreadId: system.destinationThreadId };
+};
+
+HomeworkStore.prototype.setPersistentMessageId = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType, messageId: number): Promise<void> {
+  const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
+  const topic = await ensureSystemTopic(prisma);
+  await prisma.persistentMessage.update({
+    where: { topicId_messageType: { topicId: topic.id, messageType } },
+    data: { messageId },
+  });
 };
 
 HomeworkStore.prototype.setPersistentMessageDestination = async function (_chatId: number, _threadId: number, messageType: PersistentMessageType, destinationChatId: number, destinationThreadId: number | null): Promise<void> {
