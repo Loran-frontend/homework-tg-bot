@@ -4,6 +4,7 @@ import { HomeworkStore } from "./store.js";
 import { IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject, telegramTextToHtml } from "./format.js";
 import { parseAddCommand } from "./add-flow.js";
 import { refreshMessage } from "./refresh-compat.js";
+import { installGroupRoleManagement } from "./group-roles.js";
 import type { HomeworkSubgroup, HomeworkType, PersistentMessageType } from "./types.js";
 
 type Topic = { chatId: number; threadId: number };
@@ -20,12 +21,14 @@ const COMMAND_HELP = [
   "/setactive <chat_id> <thread_id> | here — настроить актуальные ДЗ",
   "/setarchive <chat_id> <thread_id> | here — настроить архив ДЗ",
   "/settings — показать настройки вывода",
+  "/role add|remove|list — управление доступом (только создатель)",
 ].join("\n");
 
 const addStates = new Map<string, AddState>();
 
 export function createBot(token: string, store: HomeworkStore): Bot {
   const bot = new Bot(token);
+  installGroupRoleManagement(bot, store);
 
   bot.command("start", async (ctx) => runCommand(ctx, async () => {
     const topic = getTopic(ctx);
@@ -160,9 +163,7 @@ export function createBot(token: string, store: HomeworkStore): Bot {
       }
 
       const htmlDescription = telegramTextToHtml(plainDescription, ctx.message.entities);
-      const description = ctx.message.entities?.length
-        ? `[[TELEGRAM_HTML]]${htmlDescription}`
-        : plainDescription;
+      const description = ctx.message.entities?.length ? `[[TELEGRAM_HTML]]${htmlDescription}` : plainDescription;
 
       const deadline = state.deadline.getTime() === 0 ? null : state.deadline;
       await store.addHomework(topic, state.type, state.subject, description, state.subgroup, deadline, userInput(ctx));
