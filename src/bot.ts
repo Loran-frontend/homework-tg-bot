@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { HomeworkStore } from "./store.js";
-import { IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject } from "./format.js";
+import { IRNITU_SUBJECTS, MIPT_SUBJECTS, isValidSubject, telegramTextToHtml } from "./format.js";
 import { parseAddCommand } from "./add-flow.js";
 import { refreshMessage } from "./refresh-compat.js";
 import type { HomeworkSubgroup, HomeworkType, PersistentMessageType } from "./types.js";
@@ -153,11 +153,16 @@ export function createBot(token: string, store: HomeworkStore): Bot {
         return;
       }
 
-      const description = ctx.message.text.trim();
-      if (!description) {
+      const plainDescription = ctx.message.text.trim();
+      if (!plainDescription) {
         await replyInTopic(ctx, "Текст задания не может быть пустым.", topic);
         return;
       }
+
+      const htmlDescription = telegramTextToHtml(plainDescription, ctx.message.entities);
+      const description = ctx.message.entities?.length
+        ? `[[TELEGRAM_HTML]]${htmlDescription}`
+        : plainDescription;
 
       const deadline = state.deadline.getTime() === 0 ? null : state.deadline;
       await store.addHomework(topic, state.type, state.subject, description, state.subgroup, deadline, userInput(ctx));
