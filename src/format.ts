@@ -85,7 +85,80 @@ function formatItem(item: HomeworkItem, archive: boolean): string {
   const mark = item.completed ? "✅" : "⬜";
   const deadline = item.deadline ? `\n⏰ до ${formatDeadline(item.deadline)}` : "";
   const archived = archive ? "\n🗄 В архиве" : "";
-  return `${item.id}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${escapeHtml(item.description)}\n👥 ${subgroupLabel(item.subgroup)}${deadline}${archived}`;
+  return `${item.id}. ${mark} <b>${escapeHtml(item.subject)}</b>\n${formatStoredDescription(item.description)}\n👥 ${subgroupLabel(item.subgroup)}${deadline}${archived}`;
+}
+
+/**
+ * Converts Telegram message entities to safe Telegram HTML while preserving
+ * links such as [текст](https://example.com). JavaScript string indexes and
+ * Telegram entity offsets both use UTF-16 code units, so slice() is suitable.
+ */
+export function telegramTextToHtml(
+  text: string,
+  entities: readonly TelegramTextEntity[] | undefined,
+): string {
+  if (!entities || entities.length === 0) return escapeHtml(text);
+
+  const supported = entities
+    .filter((entity) => entity.length > 0 && entity.offset >= 0 && entity.offset + entity.length <= text.length)
+    .sort((a, b) => a.offset - b.offset || b.length - a.length);
+
+  if (supported.length === 0) return escapeHtml(text);
+
+  const boundaries = new Set<number>([0, text.length]);
+  for (const entity of supported) {
+    boundaries.add(entity.offset);
+    boundaries.add(entity.offset + entity.length);
+  }
+
+  const points = [...boundaries].sort((a, b) => a - b);
+  const result: string[] = [];
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    const segment = text.slice(start, end);
+    const active = supported.filter((entity) => entity.offset <= start && entity.offset + entity.length >= end);
+
+    let value = escapeHtml(segment);
+    for (let entityIndex = active.length - 1; entityIndex >= 0; entityIndex -= 1) {
+      value = wrapTelegramEntity(value, active[entityIndex]);
+    }
+    result.push(value);
+  }
+
+  return result.join("");
+}
+
+export interface TelegramTextEntity {
+  type: string;
+  offset: number;
+  length: number;
+  url?: string;
+}
+
+function wrapTelegramEntity(value: string, entity: TelegramTextEntity): string {
+  switch (entity.type) {
+    case "text_link":
+      return `<a href="${escapeHtmlAttribute(entity.url ?? "")}">${value}</a>`;
+    case "url": {
+      const url = unescapeHtml(value);
+      return `<a href="${escapeHtmlAttribute(url)}">${value}</a>`;
+    }
+    case "bold": return `<b>${value}</b>`;
+    case "italic": return `<i>${value}</i>`;
+    case "underline": return `<u>${value}</u>`;
+    case "strikethrough": return `<s>${value}</s>`;
+    case "spoiler": return `<tg-spoiler>${value}</tg-spoiler>`;
+    case "code": return `<code>${value}</code>`;
+    case "pre": return `<pre>${value}</pre>`;
+    default: return value;
+  }
+}
+
+function formatStoredDescription(value: string): string {
+  if (value.startsWith("[[TELEGRAM_HTML]]")) return value.slice("[[TELEGRAM_HTML]]".length);
+  return escapeHtml(value);
 }
 
 export function subgroupLabel(subgroup: HomeworkSubgroup): string {
@@ -114,4 +187,12 @@ function pluralizeItems(count: number): string {
 
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtml(value).replaceAll("'", "&#39;");
+}
+
+function unescapeHtml(value: string): string {
+  return value.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
