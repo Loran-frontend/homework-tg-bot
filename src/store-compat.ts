@@ -123,3 +123,22 @@ HomeworkStore.prototype.withPersistentMessageLock = async function <T>(_chatId: 
 HomeworkStore.prototype.archiveExpired = async function (now: Date = new Date()): Promise<Array<Topic>> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const dueItems = await prisma.homeworkItem.findMany({ where: { archived: false, deadline: { lte: now } }, select: { id: true } });
+  if (dueItems.length === 0) return [];
+  await prisma.homeworkItem.updateMany({ where: { id: { in: dueItems.map((item) => item.id) }, archived: false, deadline: { lte: now } }, data: { archived: true } });
+  const configured = await prisma.persistentMessage.findMany({ where: { topic: { group: { chatId: 0n }, messageThreadId: 0 }, destinationChatId: { not: null } }, select: { id: true } });
+  return configured.length > 0 ? [SYSTEM_TOPIC] : [];
+};
+
+async function ensureSystemTopic(client: PrismaClient | Prisma.TransactionClient): Promise<{ id: number }> {
+  const group = await client.telegramGroup.upsert({ where: { chatId: 0n }, update: {}, create: { chatId: 0n, title: "Homework system storage" } });
+  return client.topic.upsert({ where: { groupId_messageThreadId: { groupId: group.id, messageThreadId: 0 } }, update: {}, create: { groupId: group.id, messageThreadId: 0, name: "Homework system storage" } });
+}
+
+async function ensureSystemPersistentMessage(client: PrismaClient, messageType: PersistentMessageType): Promise<{ messageId: number; destinationChatId: bigint | null; destinationThreadId: number | null } | null> {
+  const topic = await ensureSystemTopic(client);
+  const existing = await client.persistentMessage.findUnique({ where: { topicId_messageType: { topicId: topic.id, messageType } } });
+  if (existing) return existing;
+  const configured = await client.persistentMessage.findFirst({ where: { messageType, destinationChatId: { not: null } }, orderBy: { updatedAt: "desc" } });
+  if (!configured) return null;
+  return client.persistentMessage.upsert({ where: { topicId_messageType: { topicId: topic.id, messageType } }, update: { messageId: configured.messageId, destinationChatId: configured.destinationChatId, destinationThreadId: configured.destinationThreadId }, create: { topicId: topic.id, messageType, messageId: configured.messageId, destinationChatId: configured.destinationChatId, destinationThreadId: configured.destinationThreadId } });
+}
