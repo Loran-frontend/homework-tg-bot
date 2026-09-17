@@ -36,11 +36,7 @@ HomeworkStore.prototype.deleteHomework = function (_topic, id, userId) {
 
 HomeworkStore.prototype.setGroupOwner = async function (chatId: number, telegramId: number, title?: string): Promise<void> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
-  await prisma.telegramGroup.upsert({
-    where: { chatId: BigInt(chatId) },
-    update: { ownerTelegramId: BigInt(telegramId), ...(title ? { title } : {}) },
-    create: { chatId: BigInt(chatId), ownerTelegramId: BigInt(telegramId), title },
-  });
+  await prisma.telegramGroup.upsert({ where: { chatId: BigInt(chatId) }, update: { ownerTelegramId: BigInt(telegramId), ...(title ? { title } : {}) }, create: { chatId: BigInt(chatId), ownerTelegramId: BigInt(telegramId), title } });
 };
 
 HomeworkStore.prototype.isGroupOwner = async function (chatId: number, telegramId: number): Promise<boolean> {
@@ -51,18 +47,16 @@ HomeworkStore.prototype.isGroupOwner = async function (chatId: number, telegramI
 
 HomeworkStore.prototype.isGroupAdmin = async function (chatId: number, telegramId: number): Promise<boolean> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
-  const role = await prisma.telegramGroupRole.findUnique({ where: { groupId_telegramId: { groupId: (await prisma.telegramGroup.findUnique({ where: { chatId: BigInt(chatId) }, select: { id: true } }))?.id ?? -1, telegramId: BigInt(telegramId) } } });
+  const group = await prisma.telegramGroup.findUnique({ where: { chatId: BigInt(chatId) }, select: { id: true } });
+  if (!group) return false;
+  const role = await prisma.telegramGroupRole.findUnique({ where: { groupId_telegramId: { groupId: group.id, telegramId: BigInt(telegramId) } }, select: { role: true } });
   return role?.role === "ADMIN";
 };
 
 HomeworkStore.prototype.addGroupAdmin = async function (chatId: number, telegramId: number, title?: string): Promise<void> {
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
   const group = await prisma.telegramGroup.upsert({ where: { chatId: BigInt(chatId) }, update: title ? { title } : {}, create: { chatId: BigInt(chatId), title } });
-  await prisma.telegramGroupRole.upsert({
-    where: { groupId_telegramId: { groupId: group.id, telegramId: BigInt(telegramId) } },
-    update: { role: "ADMIN" },
-    create: { groupId: group.id, telegramId: BigInt(telegramId), role: "ADMIN" },
-  });
+  await prisma.telegramGroupRole.upsert({ where: { groupId_telegramId: { groupId: group.id, telegramId: BigInt(telegramId) } }, update: { role: "ADMIN" }, create: { groupId: group.id, telegramId: BigInt(telegramId), role: "ADMIN" } });
 };
 
 HomeworkStore.prototype.removeGroupAdmin = async function (chatId: number, telegramId: number): Promise<void> {
@@ -77,19 +71,14 @@ HomeworkStore.prototype.listGroupAdmins = async function (chatId: number): Promi
   const group = await prisma.telegramGroup.findUnique({ where: { chatId: BigInt(chatId) }, select: { id: true } });
   if (!group) return [];
   const roles = await prisma.telegramGroupRole.findMany({ where: { groupId: group.id }, select: { telegramId: true, role: true }, orderBy: { createdAt: "asc" } });
-  return roles.map((role) => ({ telegramId: Number(role.telegramId), role }));
+  return roles.map((item) => ({ telegramId: Number(item.telegramId), role: item.role }));
 };
 
 HomeworkStore.prototype.getTopicMessages = async function (chatId: number, threadId: number): Promise<TopicMessages> {
   await this.archiveExpired();
-  const [active, archive, miptActive, miptArchive] = await Promise.all([
-    this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "IRNITU", false),
-    this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "IRNITU", true),
-    this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "MIPT", false),
-    this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "MIPT", true),
-  ]);
+  const [active, archive, miptActive, miptArchive] = await Promise.all([this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "IRNITU", false), this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "IRNITU", true), this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "MIPT", false), this.getTopic(SYSTEM_TOPIC.chatId, SYSTEM_TOPIC.threadId, "MIPT", true)]);
   const prisma = (this as unknown as { prisma: PrismaClient }).prisma;
-  const messages = await prisma.persistentMessage.findMany({ where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId }, select: { messageType: true, messageId: true, destinationChatId: true, destinationThreadId: true } });
+  const messages = await prisma.persistentMessage.findMany({ where: { topic: { group: { chatId: BigInt(chatId) }, messageThreadId: threadId } }, select: { messageType: true, messageId: true, destinationChatId: true, destinationThreadId: true } });
   const activeMessage = messages.find((message) => message.messageType === "ACTIVE");
   const archiveMessage = messages.find((message) => message.messageType === "ARCHIVE");
   return { chatId, threadId, activeMessageId: activeMessage?.messageId, activeChatId: activeMessage?.destinationChatId == null ? undefined : Number(activeMessage.destinationChatId), archiveMessageId: archiveMessage?.messageId, archiveChatId: archiveMessage?.destinationChatId == null ? undefined : Number(archiveMessage.destinationChatId), active: [active, miptActive], archive: [archive, miptArchive] };
