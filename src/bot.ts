@@ -281,7 +281,7 @@ export function parseDeadline(value: string): Date | null {
     : null;
 }
 
-function parseOutputDestination(value: string, current: Topic): Topic {
+export function parseOutputDestination(value: string, current: Topic): Topic {
   const input = value.trim();
   if (!input || input.toLowerCase() === "here") return current;
   const parts = input.split(/\s+/);
